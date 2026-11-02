@@ -14,16 +14,10 @@
 - 与 MaiBot 主程序相同的运行环境
 - 可访问你配置的 embedding 服务
 
-安装依赖：
+安装依赖（在仓库根目录）：
 
 ```bash
-pip install -r src/A_memorix/requirements.txt --upgrade
-```
-
-如果当前目录就是 `src/A_memorix`，也可以：
-
-```bash
-pip install -r requirements.txt --upgrade
+uv sync
 ```
 
 ## 2. 配置子系统

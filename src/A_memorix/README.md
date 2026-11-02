@@ -117,16 +117,10 @@ A_Memorix 是 MaiBot 内置的长期记忆子系统。
 
 ### 1. 安装依赖
 
-在 MaiBot 主程序使用的同一个 Python 环境中执行：
+A_Memorix 的依赖已并入主项目 `pyproject.toml`，在仓库根目录执行：
 
 ```bash
-pip install -r src/A_memorix/requirements.txt --upgrade
-```
-
-如果当前目录已经是 `src/A_memorix`，也可以执行：
-
-```bash
-pip install -r requirements.txt --upgrade
+uv sync
 ```
 
 ### 2. 配置子系统
