@@ -4995,6 +4995,60 @@ class LogConfig(ConfigBase):
     )
     """主日志文件超过多少天后清理。"""
 
+    plugin_runtime_debug_max_bytes: int = Field(
+        default=8 * 1024 * 1024,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "插件诊断单文件大小",
+                "en_US": "Plugin diagnostics file size",
+                "ja_JP": "プラグイン診断ファイルサイズ",
+            },
+            "x-widget": "input",
+            "advanced": True,
+        },
+    )
+    """插件运行时 RPC 诊断文件超过这个大小后轮转。"""
+
+    plugin_runtime_debug_backup_count: int = Field(
+        default=5,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "插件诊断保留份数",
+                "en_US": "Plugin diagnostics backups",
+                "ja_JP": "プラグイン診断バックアップ数",
+            },
+            "x-widget": "input",
+            "advanced": True,
+        },
+    )
+    """插件运行时 RPC 诊断文件最多保留多少个历史备份。"""
+
+    debug_artifact_cleanup_enabled: bool = Field(
+        default=True,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "自动清理调试产物",
+                "en_US": "Auto clean debug artifacts",
+                "ja_JP": "デバッグ成果物の自動削除",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """按保留天数清理 Prompt 预览、插件诊断与内存诊断目录，默认开启。"""
+
+    debug_artifact_retention_days: int = Field(
+        default=7,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "调试产物保留天数",
+                "en_US": "Debug artifact retention days",
+                "ja_JP": "デバッグ成果物の保持日数",
+            },
+            "x-widget": "input",
+        },
+    )
+    """调试产物超过多少天后删除；主日志另由「日志保留天数」控制。"""
+
     llm_request_snapshot_limit: int = Field(
         default=128,
         json_schema_extra={

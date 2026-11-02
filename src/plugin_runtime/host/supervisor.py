@@ -82,6 +82,8 @@ from src.services.bot_account_service import (
 )
 
 from .authorization import AuthorizationManager
+from src.plugin_runtime.debug_log import append_debug_record
+
 from .api_registry import APIRegistry
 from .capability_service import CapabilityService
 from .component_registry import ComponentRegistry
@@ -282,10 +284,7 @@ class PluginRunnerSupervisor:
             **payload,
         }
         try:
-            debug_file = self._debug_file_path()
-            debug_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(debug_file, "a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+            append_debug_record(self._debug_file_path(), record)
         except Exception as exc:
             self._logger.warning(f"写入插件运行时 Host 诊断文件失败: {exc}")
 

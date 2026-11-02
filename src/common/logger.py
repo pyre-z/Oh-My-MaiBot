@@ -389,6 +389,10 @@ def load_log_config():  # sourcery skip: use-contextlib-suppress
         "log_file_max_bytes": 5 * 1024 * 1024,  # 单个日志文件最大大小
         "max_log_files": 30,  # 最多保留的日志文件数量
         "log_cleanup_days": 30,  # 日志保留天数
+        "plugin_runtime_debug_max_bytes": 8 * 1024 * 1024,  # 插件 RPC 诊断单文件上限
+        "plugin_runtime_debug_backup_count": 5,  # 插件 RPC 诊断历史备份数
+        "debug_artifact_cleanup_enabled": True,  # 是否按天清理调试产物
+        "debug_artifact_retention_days": 7,  # 调试产物保留天数
         "suppress_libraries": [
             "faiss",
             "httpx",
@@ -995,6 +999,13 @@ def start_log_cleanup_task():
     def cleanup_task():
         while True:
             cleanup_old_logs()
+            # 子目录里的调试产物不归 cleanup_old_logs 管，必须单独按保留天数清理。
+            try:
+                from src.common.debug_artifacts import cleanup_debug_artifacts_from_config
+
+                cleanup_debug_artifacts_from_config(logs_root=LOG_DIR)
+            except Exception as e:
+                get_logger("logger").warning(f"清理调试产物失败: {e}")
             time.sleep(24 * 60 * 60)  # 每24小时执行一次
 
     cleanup_thread = threading.Thread(target=cleanup_task, daemon=True)

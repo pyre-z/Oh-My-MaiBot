@@ -77,6 +77,7 @@ from src.plugin_runtime.protocol.envelope import (
 )
 from src.plugin_runtime.protocol.errors import ErrorCode
 from src.plugin_runtime.runner.log_handler import RunnerIPCLogHandler
+from src.plugin_runtime.debug_log import append_debug_record
 from src.plugin_runtime.runner.plugin_paths import PluginPaths, build_plugin_paths
 from src.plugin_runtime.runner.plugin_loader import PluginCandidate, PluginLoader, PluginMeta
 from src.plugin_runtime.runner.rpc_client import RPCClient
@@ -671,10 +672,7 @@ class PluginRunner:
             **payload,
         }
         try:
-            debug_file = self._debug_file_path()
-            debug_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(debug_file, "a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+            append_debug_record(self._debug_file_path(), record)
         except Exception as exc:
             logger.warning(f"写入 Runner RPC 诊断文件失败: {exc}")
 

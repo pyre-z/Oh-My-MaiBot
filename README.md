@@ -41,19 +41,25 @@
 - 新增配置 `emoji.plugin_selector`（默认 `true`）：关掉即恢复内核原有的视觉选图。
 - 用途：把选择权交给语义召回插件（描述向量 + 可选模型重排 + 前 N 随机），省掉每轮一次 25 图视觉调用。
 
-### 4. 依赖管理统一到 uv
+### 4. 诊断日志轮转与调试产物清理
+
+- `logs/plugin_runtime_debug/runner_rpc_debug.jsonl` 由 Host 与 Runner 两个进程共用追加写入，原来没有上限；现改为按大小轮转（`plugin_runtime_debug_max_bytes`，默认 8 MiB；`plugin_runtime_debug_backup_count`，默认 5 份），轮转时用文件锁避免两个进程互相覆盖。
+- 新增每日清理：`logs/maisaka_prompt`、`logs/plugin_runtime_debug`、`logs/memory_diagnostics` 超过 `debug_artifact_retention_days`（默认 7 天）的文件自动删除，并回收清空的会话目录；总开关 `debug_artifact_cleanup_enabled`（默认 `true`）。Prompt 预览的图片引用索引不受影响。
+- 也可手动执行：`python -m src.common.debug_artifacts --logs-root logs --days 7 --apply`（不带 `--apply` 只统计）。
+
+### 5. 依赖管理统一到 uv
 
 - 删除 `requirements.txt` 与 `src/A_memorix/requirements.txt`，只保留 `pyproject.toml` + `uv.lock`（外加 `.python-version` 固定 Python 3.13）。
 - `Dockerfile` 依赖层复制 `uv.lock` 并按锁安装，构建可复现；`.dockerignore` 不再排除 `uv.lock`。
 - `scripts/run.sh` 的 `pip install -r` 改为 `uv pip install -e .`。
 - 自更新的依赖变更检测从 `requirements.txt` 改为 `pyproject.toml` + `uv.lock`，只走 `uv sync`。
 
-### 5. 其他
+### 6. 其他
 
 - 移除过时的 SnowLuma 适配器数据目录挂载，插件改用统一数据目录（配合适配器 4.5.2 及以上）。
 - 修正表情包占位文案相关的陈旧测试断言（`pytests/message_test/session_message_test.py::test_emoji`）。
 
-> 改动集中在上述文件，上游其余代码保持原样。合并上游新版本时，`gemini_client.py`、`official_configs.py`、`emoji_manager.py`、`image_manager.py`、`utils_model.py`、`llm_service.py`、`builtin_tool/send_emoji.py`、`Dockerfile`、`docker-compose.yml` 是主要冲突面。
+> 改动集中在上述文件，上游其余代码保持原样。合并上游新版本时，`gemini_client.py`、`official_configs.py`、`emoji_manager.py`、`image_manager.py`、`utils_model.py`、`llm_service.py`、`builtin_tool/send_emoji.py`、`plugin_runtime/runner/runner_main.py`、`plugin_runtime/host/supervisor.py`、`common/logger.py`、`Dockerfile`、`docker-compose.yml` 是主要冲突面。
 
 ## 本地开发与运行
 
