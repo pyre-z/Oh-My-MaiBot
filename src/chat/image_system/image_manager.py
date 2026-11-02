@@ -498,6 +498,15 @@ class ImageManager:
             logger.info(f"Cleaned mistaken registration state on {fixed_counter} image records")
 
     async def _generate_image_description(self, image_bytes: bytes, image_format: str) -> str:
+        if str(image_format or "").lower() in {"gif", "webp"}:
+            from src.chat.image_system.animation import describe_animation, detect_animated_format
+
+            if await asyncio.to_thread(detect_animated_format, image_bytes):
+                description = await describe_animation(image_bytes)
+                if description:
+                    return description
+                logger.warning("动图描述生成失败，回退到静态首帧识别")
+
         prompt_template = prompt_manager.get_prompt("image_description")
         prompt = await prompt_manager.render_prompt(prompt_template)
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")

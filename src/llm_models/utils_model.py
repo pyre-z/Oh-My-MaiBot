@@ -391,6 +391,72 @@ class LLMOrchestrator:
             model_info.name,
         )
 
+    async def generate_response_for_frames(
+        self,
+        prompt: str,
+        frames: List[Tuple[str, str]],
+        *,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        interrupt_flag: asyncio.Event | None = None,
+        session_id: str = "",
+    ) -> LLMResponseResult:
+        """按时间顺序把多张帧图交给模型，用于动图理解。
+
+        Args:
+            prompt: 文本提示词（需说明帧的顺序含义）。
+            frames: `(image_base64, image_format)` 列表，顺序即时间顺序。
+            temperature: 显式指定的温度参数。
+            max_tokens: 显式指定的最大输出 token 数。
+            interrupt_flag: 外部中断标记；被设置时会尽快终止请求。
+            session_id: 会话标识。
+
+        Returns:
+            LLMResponseResult: 统一文本响应结果对象。
+        """
+
+        self._refresh_task_config()
+        start_time = time.time()
+        ordered_frames = [(str(image_base64), str(image_format).lower()) for image_base64, image_format in frames]
+
+        def context_factory(client: BaseClient) -> List[ContextItem]:
+            item_builder = ContextItemBuilder()
+            item_builder.add_text_content(prompt)
+            support_formats = client.get_support_image_formats()
+            for image_base64, image_format in ordered_frames:
+                item_builder.add_image_content(
+                    image_base64=image_base64, image_format=image_format, support_formats=support_formats
+                )
+            return [item_builder.build()]
+
+        execution_result = await self._execute_request(
+            request_type=RequestType.RESPONSE,
+            context_factory=context_factory,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            interrupt_flag=interrupt_flag,
+            session_id=session_id,
+        )
+        response = execution_result.api_response
+        model_info = execution_result.model_info
+        time_cost = time.time() - start_time
+        if usage := response.usage:
+            await asyncio.to_thread(
+                llm_usage_recorder.record_usage_to_database,
+                request_started_at=execution_result.request_started_at,
+                model_info=model_info,
+                model_usage=usage,
+                user_id="system",
+                request_type=self.request_type,
+                task_name=self.task_name,
+                session_id=self._resolve_effective_session_id(session_id),
+                time_cost=time_cost,
+            )
+        return self._build_generation_result(
+            response,
+            model_info.name,
+        )
+
     async def generate_response_for_voice(
         self,
         voice_base64: str,

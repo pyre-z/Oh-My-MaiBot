@@ -4,6 +4,7 @@ from time import perf_counter
 from typing import Any, Literal, Optional
 
 import asyncio
+import base64
 import hashlib
 import heapq
 import random
@@ -1018,24 +1019,48 @@ class EmojiManager:
         )
         try:
             request_image_format = image_format
-            if image_format == "gif":
-                try:
-                    image_bytes = await asyncio.to_thread(ImageUtils.gif_2_static_image, image_bytes)
-                except Exception as e:
-                    logger.error(f"[构建描述] 转换 GIF 图片时出错: {e}")
-                    return False, target_emoji
-                request_image_format = "jpg"
+            animation_frames: list[bytes] = []
+            if image_format in {"gif", "webp"}:
+                from src.chat.image_system.animation import (
+                    animation_enabled,
+                    detect_animated_format,
+                    extract_frames,
+                )
 
+                if animation_enabled() and await asyncio.to_thread(detect_animated_format, image_bytes):
+                    try:
+                        animation_frames = await asyncio.to_thread(extract_frames, image_bytes)
+                    except Exception as exc:  # noqa: BLE001 - 抽帧失败退回静态首帧
+                        logger.warning(f"[构建描述] 动图抽帧失败，回退静态首帧: {exc}")
+                if not animation_frames:
+                    try:
+                        image_bytes = await asyncio.to_thread(ImageUtils.gif_2_static_image, image_bytes)
+                    except Exception as e:
+                        logger.error(f"[构建描述] 转换 GIF 图片时出错: {e}")
+                        return False, target_emoji
+                    request_image_format = "jpg"
+
+            is_animation = bool(animation_frames)
             analysis_prompt_template = prompt_manager.get_prompt("emoji_content_analysis")
-            analysis_prompt_template.add_context("image_type", "GIF" if image_format == "gif" else "STATIC")
-            analysis_prompt = await prompt_manager.render_prompt(analysis_prompt_template)
-            image_base64 = ImageUtils.image_bytes_to_base64(image_bytes)
-            description_result = await emoji_manager_vlm.generate_response_for_image(
-                analysis_prompt,
-                image_base64,
-                request_image_format,
-                session_id=session_id,
+            analysis_prompt_template.add_context(
+                "image_type",
+                "ANIMATION" if is_animation else ("GIF" if image_format == "gif" else "STATIC"),
             )
+            analysis_prompt = await prompt_manager.render_prompt(analysis_prompt_template)
+            if is_animation:
+                description_result = await emoji_manager_vlm.generate_response_for_frames(
+                    analysis_prompt,
+                    [(base64.b64encode(frame).decode("ascii"), "png") for frame in animation_frames],
+                    session_id=session_id,
+                )
+            else:
+                image_base64 = ImageUtils.image_bytes_to_base64(image_bytes)
+                description_result = await emoji_manager_vlm.generate_response_for_image(
+                    analysis_prompt,
+                    image_base64,
+                    request_image_format,
+                    session_id=session_id,
+                )
             description = description_result.response
         except Exception as e:
             logger.error(f"[构建描述] 调用视觉模型生成表情包描述时出错: {e}")

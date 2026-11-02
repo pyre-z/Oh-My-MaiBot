@@ -371,6 +371,52 @@ class VisualConfig(ConfigBase):
     )
     """一次多模态请求最多带多少张图，太大可能更慢更贵。"""
 
+    enable_animation_understanding: bool = Field(
+        default=True,
+        json_schema_extra={
+            "x-widget": "switch",
+            "x-layout": "inline-right",
+            "label": {
+                "zh_CN": "理解动图",
+                "en_US": "Understand animated images",
+                "ja_JP": "アニメーション画像を理解",
+            },
+        },
+    )
+    """GIF / 动画 WebP 是否按「抽帧 + 多帧理解」描述动作；关闭后按静态首帧处理。"""
+
+    animation_max_frames: int = Field(
+        default=6,
+        ge=2,
+        le=16,
+        json_schema_extra={
+            "advanced": True,
+            "x-widget": "input",
+            "label": {
+                "zh_CN": "动图抽帧数",
+                "en_US": "Animation frames",
+                "ja_JP": "アニメーション抽フレーム数",
+            },
+        },
+    )
+    """单张动图最多抽多少帧送视觉模型，帧越多越准也越贵。"""
+
+    animation_max_side: int = Field(
+        default=512,
+        ge=128,
+        le=1024,
+        json_schema_extra={
+            "advanced": True,
+            "x-widget": "input",
+            "label": {
+                "zh_CN": "动图帧长边",
+                "en_US": "Animation frame size",
+                "ja_JP": "アニメーションフレーム最大辺",
+            },
+        },
+    )
+    """动图抽帧后单帧最长边像素，过大只会增加耗时与费用。"""
+
     wait_image_recognize_max_time: float = Field(
         default=32,
         ge=0,

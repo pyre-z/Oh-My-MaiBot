@@ -427,6 +427,67 @@ class LLMServiceClient:
         self._record_cache_stats(result, prompt_text=prompt_text, session_id=session_id)
         return result
 
+    async def generate_response_for_frames(
+        self,
+        prompt: str,
+        frames: List[Tuple[str, str]],
+        options: LLMImageOptions | None = None,
+        *,
+        session_id: str = "",
+    ) -> LLMResponseResult:
+        """按时间顺序把多张帧图交给模型，用于动图理解。
+
+        Args:
+            prompt: 文本提示词。
+            frames: `(image_base64, image_format)` 列表，顺序即时间顺序。
+            options: 图像理解选项。
+            session_id: 会话标识。
+
+        Returns:
+            LLMResponseResult: 统一文本生成结果。
+        """
+
+        active_options = self._normalize_image_options(options)
+        prepared: List[Tuple[str, str]] = []
+        frame_digests: List[str] = []
+        for image_base64, image_format in frames:
+            normalized_base64, normalized_format, _ = ImageUtils.normalize_image_base64_for_model(
+                image_base64,
+                image_format,
+            )
+            prepared.append((normalized_base64, normalized_format))
+            frame_digests.append(hashlib.sha256(normalized_base64.encode("utf-8")).hexdigest())
+        prompt_text = json.dumps(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "parts": [
+                            {"type": "text", "text": prompt},
+                            *[
+                                {"type": "image", "format": image_format, "sha256": digest}
+                                for (_, image_format), digest in zip(prepared, frame_digests, strict=False)
+                            ],
+                        ],
+                    }
+                ],
+                "tool_options": [],
+                "response_format": None,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        result = await self._orchestrator.generate_response_for_frames(
+            prompt=prompt,
+            frames=prepared,
+            temperature=active_options.temperature,
+            max_tokens=active_options.max_tokens,
+            interrupt_flag=active_options.interrupt_flag,
+            session_id=self._resolve_effective_session_id(session_id),
+        )
+        self._record_cache_stats(result, prompt_text=prompt_text, session_id=session_id)
+        return result
+
     async def transcribe_audio(self, voice_base64: str, *, session_id: str = "") -> LLMAudioTranscriptionResult:
         """执行音频转写请求。
 

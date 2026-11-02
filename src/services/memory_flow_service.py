@@ -948,9 +948,17 @@ class ImageMemoryWritebackService:
             try:
                 if not component.binary_data:
                     await component.load_image_binary()
+                ingest_bytes = bytes(component.binary_data)
+                from src.chat.image_system.animation import to_static_cover
+
+                # 图片记忆只接受静态格式（BMP/JPEG/PNG/WEBP），动图按首帧 PNG 入库；
+                # 描述仍用原动图，按原始哈希缓存，回看时不受封面转换影响。
+                cover = await asyncio.to_thread(to_static_cover, ingest_bytes)
+                if cover:
+                    ingest_bytes = cover
                 result = await memory_service.image_memory(
                     action="ingest",
-                    image_bytes=bytes(component.binary_data),
+                    image_bytes=ingest_bytes,
                     source_kind="chat",
                     external_ref=build_chat_external_ref(
                         chat_id=chat_id,
