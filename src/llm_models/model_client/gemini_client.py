@@ -9,6 +9,7 @@ import io
 import json
 import uuid
 
+import httpx
 from google import genai
 from google.genai.errors import (
     ClientError,
@@ -81,6 +82,7 @@ from .base_client import (
     APIResponse,
     AudioTranscriptionRequest,
     EmbeddingRequest,
+    ImageEmbeddingRequest,
     ResponseRequest,
     UsageTuple,
     client_registry,
@@ -91,6 +93,7 @@ from ..request_snapshot import (
     save_failed_request_snapshot,
     serialize_audio_request_snapshot,
     serialize_embedding_request_snapshot,
+    serialize_image_embedding_request_snapshot,
     serialize_response_request_snapshot,
 )
 
@@ -754,6 +757,87 @@ def _build_http_options(api_provider: APIProvider) -> HttpOptions:
     return HttpOptions(**http_options_payload)
 
 
+def _build_image_embedding_endpoint(base_url: str, model_identifier: str) -> str:
+    """派生 Gemini `:embedContent` 端点。
+
+    Args:
+        base_url: Provider 基础地址，允许末尾已带 `v1`/`v1beta` 之类的版本段。
+        model_identifier: 服务商侧模型标识。
+
+    Returns:
+        str: 完整的 `:embedContent` 请求地址。
+    """
+
+    normalized = str(base_url or "").strip().rstrip("/")
+    if not normalized:
+        raise ValueError("图片嵌入需要配置 Provider 的 base_url")
+    if not normalized.rsplit("/", 1)[-1].startswith("v"):
+        normalized = f"{normalized}/v1beta"
+    return f"{normalized}/models/{model_identifier}:embedContent"
+
+
+def _build_image_embedding_auth(api_provider: APIProvider) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """按 Provider 的鉴权配置生成请求头与查询参数。
+
+    未显式配置 `auth_type` 时使用 Gemini 官方默认的 `x-goog-api-key`；
+    `bearer`/`header`/`query` 沿用兼容网关的写法。
+
+    Args:
+        api_provider: 当前 Provider 配置。
+
+    Returns:
+        Tuple[Dict[str, str], Dict[str, str]]: 请求头与查询参数。
+    """
+
+    headers: Dict[str, str] = {"Content-Type": "application/json"}
+    headers.update({str(key): str(value) for key, value in (api_provider.default_headers or {}).items()})
+    query: Dict[str, str] = {str(key): str(value) for key, value in (api_provider.default_query or {}).items()}
+
+    api_key = str(api_provider.api_key or "").strip()
+    auth_type = str(api_provider.auth_type or "").strip().lower()
+    if not api_key or auth_type == "none":
+        return headers, query
+    if auth_type == "query":
+        query[str(api_provider.auth_query_name or "key")] = api_key
+        return headers, query
+    if auth_type in {"bearer", "header"}:
+        header_name = str(api_provider.auth_header_name or "Authorization")
+        default_prefix = "Bearer" if auth_type == "bearer" else ""
+        prefix = str(api_provider.auth_header_prefix or default_prefix).strip()
+        headers[header_name] = f"{prefix} {api_key}".strip() if prefix else api_key
+        return headers, query
+
+    headers["x-goog-api-key"] = api_key
+    return headers, query
+
+
+async def _post_image_embedding(
+    endpoint_url: str,
+    *,
+    payload: Dict[str, Any],
+    headers: Dict[str, str],
+    query: Dict[str, str],
+    timeout: float,
+) -> Dict[str, Any]:
+    """发送图片嵌入请求并返回原始响应。
+
+    Args:
+        endpoint_url: 已拼好的 `:embedContent` 地址。
+        payload: JSON 请求体。
+        headers: 请求头。
+        query: 查询参数。
+        timeout: 超时秒数。
+
+    Returns:
+        Dict[str, Any]: 包含 `status_code` 与 `body` 的响应字典。
+    """
+
+    ssl_context = get_shared_ssl_context()
+    async with httpx.AsyncClient(verify=ssl_context, timeout=timeout) as client:
+        response = await client.post(endpoint_url, json=payload, headers=headers, params=query or None)
+    return {"status_code": response.status_code, "body": response.text}
+
+
 def _filter_generate_content_extra_params(extra_params: Dict[str, Any]) -> Dict[str, Any]:
     """筛选可透传给 `GenerateContentConfig` 的额外参数。
 
@@ -1265,6 +1349,124 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
             0,
             billable_character_count or len(embedding_input),
         )
+        return response, usage_record
+
+    async def _execute_image_embedding_request(
+        self,
+        request: ImageEmbeddingRequest,
+    ) -> Tuple[APIResponse, UsageTuple | None]:
+        """执行 Gemini 图片嵌入请求。
+
+        Google SDK 2.x 的 `models.embed_content` 一律拼成 `:batchEmbedContents`（内部把
+        `contents` 转成 `requests[]`），而兼容网关通常只为 `:embedContent` 登记模型路由，
+        因此这里直接发原生 HTTP，请求体与 `:embedContent` 官方格式一致：
+        `{"content": {"parts": [{"inline_data": {"mime_type", "data"}}]}}`。
+
+        Args:
+            request: 统一图片嵌入请求对象。
+
+        Returns:
+            Tuple[APIResponse, UsageTuple | None]: 统一响应对象与可选使用量信息。
+        """
+
+        model_info = request.model_info
+        endpoint_url = _build_image_embedding_endpoint(self.api_provider.base_url, model_info.model_identifier)
+        encoded_image = base64.b64encode(request.image_bytes).decode("ascii")
+        payload = {
+            "content": {
+                "parts": [
+                    {"inline_data": {"mime_type": request.mime_type, "data": encoded_image}},
+                ]
+            }
+        }
+        snapshot_provider_request = {
+            "base_url": self.api_provider.base_url,
+            "endpoint": "/models/{model}:embedContent",
+            "method": "POST",
+            "operation": "models.embed_content.image",
+            "request_kwargs": {
+                "url": endpoint_url,
+                "body": f"<image mime={request.mime_type} bytes={len(request.image_bytes)}>",
+                "model": model_info.model_identifier,
+            },
+        }
+
+        try:
+            headers, query = _build_image_embedding_auth(self.api_provider)
+            http_response = await _post_image_embedding(
+                endpoint_url,
+                payload=payload,
+                headers=headers,
+                query=query,
+                timeout=float(self.api_provider.timeout or 60),
+            )
+        except Exception as exc:
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
+                api_provider=self.api_provider,
+                client_type="gemini",
+                error=exc,
+                internal_request=serialize_image_embedding_request_snapshot(request),
+                model_info=model_info,
+                operation="models.embed_content.image",
+                provider_request=snapshot_provider_request,
+                trace_context=request.trace_context,
+            )
+            wrapped_error = (
+                exc
+                if isinstance(exc, (EmptyResponseException, RespParseException, RespNotOkException))
+                else NetworkConnectionError(str(exc))
+            )
+            attach_request_snapshot(wrapped_error, snapshot_path)
+            if wrapped_error is exc:
+                raise
+            raise wrapped_error from exc
+
+        status_code = int(http_response.get("status_code") or 0)
+        body_text = str(http_response.get("body") or "")
+        if status_code != 200:
+            error = RespNotOkException(status_code, body_text[:400] or f"图片嵌入请求失败（HTTP {status_code}）")
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
+                api_provider=self.api_provider,
+                client_type="gemini",
+                error=error,
+                internal_request=serialize_image_embedding_request_snapshot(request),
+                model_info=model_info,
+                operation="models.embed_content.image",
+                provider_request=snapshot_provider_request,
+                trace_context=request.trace_context,
+            )
+            attach_request_snapshot(error, snapshot_path)
+            raise error
+
+        try:
+            parsed = json.loads(body_text)
+            values = parsed["embedding"]["values"]
+        except (ValueError, KeyError, TypeError) as exc:
+            error = RespParseException(body_text, "Gemini 图片嵌入响应解析失败，缺少 embedding.values。")
+            snapshot_path = await asyncio.to_thread(
+                save_failed_request_snapshot,
+                api_provider=self.api_provider,
+                client_type="gemini",
+                error=error,
+                internal_request=serialize_image_embedding_request_snapshot(request),
+                model_info=model_info,
+                operation="models.embed_content.image",
+                provider_request=snapshot_provider_request,
+                trace_context=request.trace_context,
+            )
+            attach_request_snapshot(error, snapshot_path)
+            raise error from exc
+
+        response = APIResponse(embedding=[float(item) for item in values], raw_data=parsed)
+        # 与插件 Provider 路径保持一致：不写 request_protocol_hash，避免作废已入库的图片向量。
+        usage_record: UsageTuple | None = None
+        metadata = parsed.get("metadata") if isinstance(parsed, dict) else None
+        if isinstance(metadata, dict):
+            billable_character_count = int(metadata.get("billableCharacterCount") or 0)
+            if billable_character_count:
+                usage_record = (billable_character_count, 0, billable_character_count)
         return response, usage_record
 
     async def _execute_audio_transcription_request(
