@@ -66,6 +66,10 @@ def get_tool_spec() -> ToolSpec:
             "type": "object",
             "properties": {
                 "msg_id": {"type": "string", "description": "要回复的消息编号；小黑盒发评论时必须指定主帖或评论消息。"},
+                "emotion": {
+                    "type": "string",
+                    "description": "这张表情想表达的情绪或语气，例如「开心」「无语」「委屈」「累了」；拿不准就留空。",
+                },
             },
         },
         provider_name="maisaka_builtin",
@@ -206,14 +210,18 @@ def _merge_emoji_tiles(image_bytes_list: List[bytes], start_index: int = 1) -> b
     return output.getvalue()
 
 
-async def _build_emoji_candidate_message(emojis: list[MaiEmoji]) -> InternalContextMessage:
+async def _build_emoji_candidate_message(
+    emojis: list[MaiEmoji],
+    grid_rows: int,
+    grid_columns: int,
+) -> InternalContextMessage:
     """构建供子代理挑选的拼图候选消息。"""
 
     image_bytes_list = await asyncio.gather(*[_load_emoji_bytes(emoji) for emoji in emojis])
     merged_image_bytes = await asyncio.to_thread(_merge_emoji_tiles, list(image_bytes_list))
     raw_message = MessageSequence(
         [
-            TextComponent("请从这张 5x5 拼图中选择一个序号。"),
+            TextComponent(f"请从这张 {grid_rows}x{grid_columns} 拼图中选择一个序号。"),
             ImageComponent(binary_hash="", binary_data=merged_image_bytes),
         ]
     )
@@ -350,6 +358,7 @@ async def _render_emoji_selection_system_prompt(
 
 async def _try_plugin_select(
     tool_ctx: BuiltinToolRuntimeContext,
+    requested_emotion: str,
     reasoning: str,
     context_texts: list[str],
     selection_metadata: Optional[Dict[str, Any]] = None,
@@ -362,7 +371,7 @@ async def _try_plugin_select(
         hook_result = await _get_runtime_manager().invoke_hook(
             "emoji.maisaka.select",
             stream_id=tool_ctx.runtime.session_id,
-            requested_emotion="",
+            requested_emotion=str(requested_emotion or "").strip(),
             reasoning=str(reasoning or ""),
             context_texts=list(context_texts or []),
         )
@@ -394,7 +403,7 @@ async def _try_plugin_select(
                     "title": "插件选图",
                     "content": "\n".join(
                         [
-                            f"来源：emoji.maisaka.select",
+                            "来源：emoji.maisaka.select",
                             f"表情描述：{description or '无描述'}",
                             f"命中情绪：{matched_emotion or '未命中'}",
                         ]
@@ -407,6 +416,7 @@ async def _try_plugin_select(
 
 async def _select_emoji_with_sub_agent(
     tool_ctx: BuiltinToolRuntimeContext,
+    requested_emotion: str,
     reasoning: str,
     context_texts: list[str],
     sample_size: int,
@@ -417,6 +427,7 @@ async def _select_emoji_with_sub_agent(
     if global_config.emoji.plugin_selector:
         plugin_pick = await _try_plugin_select(
             tool_ctx,
+            requested_emotion,
             reasoning,
             [str(item) for item in context_texts or []],
             selection_metadata,
@@ -424,7 +435,7 @@ async def _select_emoji_with_sub_agent(
         if plugin_pick is not None:
             return plugin_pick
 
-    del reasoning, context_texts, sample_size
+    del sample_size
 
     available_emojis = list(emoji_manager.emojis)
     if not available_emojis:
@@ -432,16 +443,26 @@ async def _select_emoji_with_sub_agent(
 
     total_candidate_count = min(len(available_emojis), _get_emoji_candidate_count())
     sampled_emojis = sample(available_emojis, total_candidate_count)
-    candidate_message = await _build_emoji_candidate_message(sampled_emojis)
     grid_rows, grid_columns = _calculate_grid_shape(len(sampled_emojis))
+    candidate_message = await _build_emoji_candidate_message(sampled_emojis, grid_rows, grid_columns)
+    logger.debug(
+        f"{tool_ctx.runtime.log_prefix} 回退视觉选图 候选={len(sampled_emojis)} "
+        f"布局={grid_rows}x{grid_columns} 情绪={requested_emotion!r}"
+    )
 
     system_prompt = await _render_emoji_selection_system_prompt(
         emoji_count=len(sampled_emojis),
         grid_rows=grid_rows,
         grid_columns=grid_columns,
     )
+    selection_hint_lines = [f"[选择任务]\n候选总数: {len(sampled_emojis)}\n拼图布局: {grid_rows}x{grid_columns}"]
+    if requested_emotion.strip():
+        selection_hint_lines.append(f"想表达的情绪: {requested_emotion.strip()}")
+    if reasoning.strip():
+        selection_hint_lines.append(f"发送意图: {reasoning.strip()[:120]}")
+    selection_hint_lines.append("请只输出 JSON。")
     prompt_message = ReferenceMessage(
-        content=(f"[选择任务]\n候选总数: {len(sampled_emojis)}\n拼图布局: {grid_rows}x{grid_columns}\n请只输出 JSON。"),
+        content="\n".join(selection_hint_lines),
         timestamp=datetime.now(),
         reference_type=ReferenceMessageType.TOOL_HINT,
         remaining_uses_value=1,
@@ -561,9 +582,10 @@ async def handle_tool(
             reasoning=invocation.reasoning,
             context_texts=context_texts,
             reply_message=target,
-            emoji_selector=lambda _requested_emotion, reasoning, context_texts, sample_size: (
+            emoji_selector=lambda requested_emotion, reasoning, context_texts, sample_size: (
                 _select_emoji_with_sub_agent(
                     tool_ctx,
+                    requested_emotion,
                     reasoning,
                     list(context_texts or []),
                     sample_size,
