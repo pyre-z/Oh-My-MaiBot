@@ -3,8 +3,12 @@ services:
     container_name: maim-bot-core
     stop_grace_period: 70s # Runner 最多等待 Worker 60 秒，再保留强制退出时间
     #### prod ####
-    image: sengokucola/maibot:latest
-    # image: infinitycat/maibot:latest
+    # 本地从源码构建：官方 v1.3.15 源码 + ffmpeg（gif-vision 插件转码依赖 ffmpeg/ffprobe）
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: maibot:1.3.15-ffmpeg
+    # image: sengokucola/maibot:latest
     #### dev ####
     # image: sengokucola/maibot:dev
     # image: infinitycat/maibot:dev
@@ -14,7 +18,8 @@ services:
       - MAIBOT_STATISTICS_REPORT_PATH=/MaiMBot/data/maibot_statistics.html # 统计数据输出到共享目录，首次运行可自动创建文件
       - HTTP_HOST=0.0.0.0 # Docker 中需要监听全部容器网卡，宿主机才能通过端口映射访问 WebUI
     ports:
-      - "18001:8001" # webui端口
+      - "127.0.0.1:18001:8001" # webui端口（只绑回环，对外走 OpenResty 反代 https://bot.pyre-z.me）
+      - "127.0.0.1:18002:6727" # SnowLuma 反向 WS 适配器监听口
 #      - "8000:8000"
     volumes:
       # 监听地址和端口会用于生成或迁移 ./docker-config/mmc/bot_config.toml 的 maim_message 与 webui 配置段
@@ -47,29 +52,32 @@ services:
   #     - core
   #   networks:
   #     - maim_bot
-  napcat:
-    environment:
-      - NAPCAT_UID=1000
-      - NAPCAT_GID=1000
-      - TZ=Asia/Shanghai
-    ports:
-      - "6099:6099"
-    volumes:
-      - ./docker-config/napcat:/app/napcat/config # 持久化napcat配置文件
-      - ./data/qq:/app/.config/QQ # 持久化QQ本体
-      - ./data/MaiMBot:/MaiMBot/data # 共享目录
-    container_name: maim-bot-napcat
-    restart: always
-    image: mlikiowa/napcat-docker:latest
-    networks:
-      - maim_bot
+  # ── 自带 NapCat 已停用：QQ 侧使用外部主机上的 SnowLuma，
+  #    由 MaiBot-SnowLuma-Reverse-Adapter 插件以反向 WS 方式接收（宿主 127.0.0.1:18002）。
+  #    需要 NapCat 时把下面 16 行取消注释并 `docker compose up -d napcat`。
+  # napcat:
+  #   environment:
+  #     - NAPCAT_UID=1000
+  #     - NAPCAT_GID=1000
+  #     - TZ=Asia/Shanghai
+  #   ports:
+  #     - "127.0.0.1:6099:6099"
+  #   volumes:
+  #     - ./docker-config/napcat:/app/napcat/config # 持久化napcat配置文件
+  #     - ./data/qq:/app/.config/QQ # 持久化QQ本体
+  #     - ./data/MaiMBot:/MaiMBot/data # 共享目录
+  #   container_name: maim-bot-napcat
+  #   restart: always
+  #   image: mlikiowa/napcat-docker:latest
+  #   networks:
+  #     - maim_bot
   sqlite-web:
     # 注意：coleifer/sqlite-web 镜像不支持arm64
     image: coleifer/sqlite-web
     container_name: sqlite-web
     restart: always
     ports:
-      - "8120:8080"
+      - "127.0.0.1:8120:8080" # 只读查看器，只绑回环
     volumes:
       - ./data/MaiMBot:/data/MaiMBot
     environment:
