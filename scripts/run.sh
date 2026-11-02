@@ -370,7 +370,7 @@ update_dependencies() {
         return 1
     fi
     source "${INSTALL_DIR}/venv/bin/activate"
-    if ! pip install -r requirements.txt; then
+    if ! uv pip install -e .; then
         whiptail --msgbox "🚫 依赖安装失败！" 10 60
         deactivate
         return 1
@@ -408,7 +408,7 @@ switch_branch() {
     fi
     stop_service "${SERVICE_NAME}"
     source "${INSTALL_DIR}/venv/bin/activate"
-    pip install -r requirements.txt
+    uv pip install -e .
     deactivate
 
     BRANCH="${new_branch}"
@@ -788,10 +788,9 @@ run_installation() {
 
     echo -e "${GREEN}安装Python依赖...${RESET}"
     select_pypi_index_url
-    pip install -r MaiBot/requirements.txt
     cd MaiBot
     pip install uv
-    uv pip install "${UV_PIP_INDEX_OPTION[@]}" -r requirements.txt
+    uv pip install "${UV_PIP_INDEX_OPTION[@]}" -e .
     cd ..
 
     echo -e "${GREEN}安装maim_message依赖...${RESET}"

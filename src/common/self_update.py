@@ -16,7 +16,6 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 import base64
-import importlib.util
 import json
 import logging
 import os
@@ -51,7 +50,7 @@ OFFICIAL_REPOSITORY_PATH = "Mai-with-u/MaiBot"
 OFFICIAL_REPOSITORY_URL = f"https://github.com/{OFFICIAL_REPOSITORY_PATH}.git"
 OFFICIAL_SOURCE_ID = "github"
 SUPPORTED_BRANCHES: Tuple[str, ...] = ("main", "dev")
-DEPENDENCY_FILES = frozenset({"pyproject.toml", "requirements.txt"})
+DEPENDENCY_FILES = frozenset({"pyproject.toml", "uv.lock"})
 
 PENDING_MAX_AGE_SECONDS = 600.0
 GIT_TIMEOUT_SECONDS = 120.0
@@ -272,21 +271,19 @@ def _list_commits(root: Path, base: str, target: str) -> List[UpdateCommit]:
 def detect_dependency_tool(root: Path = PROJECT_ROOT) -> Optional[str]:
     """判断当前运行环境的依赖应当用哪种方式同步。"""
 
-    # uv 管理的项目环境直接按项目依赖及源策略安装。
+    # 项目统一用 uv 管理虚拟环境：只有运行在项目自己的 .venv、且能找到 uv 时才自动同步依赖。
     in_project_venv = Path(sys.prefix).resolve() == (root / ".venv").resolve()
     if in_project_venv and (root / "pyproject.toml").is_file() and shutil.which("uv") is not None:
         return "uv"
-    if importlib.util.find_spec("pip") is not None and (root / "requirements.txt").is_file():
-        return "pip"
     return None
 
 
 def _dependency_command(tool: str) -> List[str]:
     if tool == "uv":
-        # 与普通 uv run 一样检查并更新依赖解析，沿用 pyproject 中的源和版本约束。
+        # 与普通 uv run 一样检查并更新依赖解析，沿用 pyproject 与 uv.lock 的源和版本约束。
         # --inexact 保留插件额外安装的包；这里只同步运行依赖，不安装项目本体。
         return ["uv", "sync", "--inexact", "--no-dev", "--no-install-project"]
-    return [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-r", "requirements.txt"]
+    raise SelfUpdateError("dependency_tool_unsupported", f"不支持的依赖同步方式: {tool}")
 
 
 def _failed_dependency_index(root: Path, output: str) -> Optional[Dict[str, Any]]:
