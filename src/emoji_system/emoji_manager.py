@@ -132,6 +132,33 @@ def register_emoji_hook_specs(registry: HookSpecRegistry) -> list[HookSpec]:
                 allow_abort=True,
                 allow_kwargs_mutation=True,
             ),
+            HookSpec(
+                name="emoji.maisaka.select",
+                description=(
+                    "send_emoji 视觉选图前触发；插件返回 selected_emoji_hash 时直接采用该表情并跳过拼图视觉选图。"
+                    "插件不返回或出错时回退宿主原流程。"
+                ),
+                parameters_schema=build_object_schema(
+                    {
+                        "stream_id": {"type": "string", "description": "目标会话 ID。"},
+                        "requested_emotion": {"type": "string", "description": "请求的目标情绪标签。"},
+                        "reasoning": {"type": "string", "description": "本次发送表情的推理理由。"},
+                        "context_texts": {
+                            **string_array_schema,
+                            "description": "最近聊天上下文文本列表。",
+                        },
+                        "selected_emoji_hash": {
+                            "type": "string",
+                            "description": "插件选中的表情哈希；留空表示交给宿主选图。",
+                        },
+                        "matched_emotion": {"type": "string", "description": "插件给出的命中情绪，可留空。"},
+                    },
+                    required=["stream_id", "requested_emotion", "reasoning", "context_texts"],
+                ),
+                default_timeout_ms=8000,
+                allow_abort=False,
+                allow_kwargs_mutation=True,
+            ),
         ]
     )
 
@@ -197,6 +224,41 @@ def _normalize_emoji_tag_text(raw_values: Any) -> list[str]:
         seen.add(lowered)
         deduped_tags.append(normalized_tag)
     return deduped_tags
+
+
+_DESCRIPTION_MAX_HEAD_CHARS = 60
+"""描述里「画面句子」部分的最大字符数，超出截断。"""
+
+_DESCRIPTION_MAX_TAG_CHARS = 12
+"""单个标签的最大字符数，超长的多半是模型把整句话写进了标签。"""
+
+_DESCRIPTION_MAX_TAGS = 5
+"""最多保留多少个标签。"""
+
+
+def _sanitize_emoji_description(raw_description: Any) -> str:
+    """规整表情包描述：清掉逗号类符号、截断过长句子、只保留短标签。
+
+    约定格式为 ``画面描述。标签|标签``；没有句号时按纯文本截断。
+    """
+
+    text = re.sub(r"[,，、;；\r\n\t]+", " ", str(raw_description or ""))
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    if not text:
+        return ""
+
+    head, separator, tail = text.partition("。")
+    head = head.strip()
+    if not separator:
+        if len(head) <= _DESCRIPTION_MAX_HEAD_CHARS:
+            return head
+        return head[: _DESCRIPTION_MAX_HEAD_CHARS].rstrip() + "…"
+
+    if len(head) > _DESCRIPTION_MAX_HEAD_CHARS:
+        head = head[: _DESCRIPTION_MAX_HEAD_CHARS].rstrip() + "…"
+    tags = [tag.strip() for tag in tail.split("|")]
+    tags = [tag for tag in tags if tag and len(tag) <= _DESCRIPTION_MAX_TAG_CHARS][: _DESCRIPTION_MAX_TAGS]
+    return f"{head}。{'|'.join(tags)}" if tags else f"{head}。"
 
 
 def _get_emoji_emotions(emoji: MaiEmoji) -> list[str]:
@@ -592,7 +654,9 @@ class EmojiManager:
                         # logger.info(f"[register_emoji] Emoji already registered, skipping: {emoji.file_hash}")
                         return "skipped"
 
-                    normalized_description = str(emoji.description or existing_record.description or "").strip()
+                    normalized_description = _sanitize_emoji_description(
+                        emoji.description or existing_record.description or ""
+                    )
                     normalized_emotions = _normalize_emoji_tag_text(normalized_description)
                     register_time = existing_record.register_time or datetime.now()
 
@@ -1084,7 +1148,9 @@ class EmojiManager:
             logger.info(f"[构建描述] 表情包描述被 Hook 中止注册: {target_emoji.file_name}")
             return False, target_emoji
 
-        normalized_description = str(hook_result.kwargs.get("description", description) or "").strip()
+        normalized_description = _sanitize_emoji_description(
+            hook_result.kwargs.get("description", description)
+        )
         if not normalized_description:
             logger.warning(f"[构建描述] Hook 返回空描述，拒绝注册: {target_emoji.file_name}")
             return False, target_emoji

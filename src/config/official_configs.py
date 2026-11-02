@@ -4418,6 +4418,20 @@ class EmojiConfig(ConfigBase):
     )
     """每次从多少个候选表情里挑一个发送；不是一次发送这么多。"""
 
+    plugin_selector: bool = Field(
+        default=True,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "插件优先选图",
+                "en_US": "Plugin-first emoji selection",
+                "ja_JP": "プラグイン優先の絵文字選択",
+            },
+            "x-widget": "switch",
+            "advanced": True,
+        },
+    )
+    """开启后先触发 `emoji.maisaka.select` 钩子，插件给出表情哈希就直接发送并跳过候选采样与视觉选图；插件未返回时回退宿主原流程。"""
+
     max_reg_num: int = Field(
         default=64,
         json_schema_extra={

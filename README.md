@@ -35,19 +35,25 @@
 - 配置在 `visual` 节：`enable_animation_understanding`（默认 `true`）、`animation_max_frames`（默认 `6`，范围 2–16）、`animation_max_side`（默认 `512`，范围 128–1024）。
 - 配套提示词 `prompts/{zh-CN,en-US,ja-JP}/animation_description.prompt`。
 
-### 3. 依赖管理统一到 uv
+### 3. 表情包选图交给插件
+
+- 新增 Hook `emoji.maisaka.select`：`send_emoji` 在采样拼图前先问插件要哈希，拿到就跳过「随机抽 N 张 + 视觉子代理选图」，拿不到自动回退原流程。
+- 新增配置 `emoji.plugin_selector`（默认 `true`）：关掉即恢复内核原有的视觉选图。
+- 用途：把选择权交给语义召回插件（描述向量 + 可选模型重排 + 前 N 随机），省掉每轮一次 25 图视觉调用。
+
+### 4. 依赖管理统一到 uv
 
 - 删除 `requirements.txt` 与 `src/A_memorix/requirements.txt`，只保留 `pyproject.toml` + `uv.lock`（外加 `.python-version` 固定 Python 3.13）。
 - `Dockerfile` 依赖层复制 `uv.lock` 并按锁安装，构建可复现；`.dockerignore` 不再排除 `uv.lock`。
 - `scripts/run.sh` 的 `pip install -r` 改为 `uv pip install -e .`。
 - 自更新的依赖变更检测从 `requirements.txt` 改为 `pyproject.toml` + `uv.lock`，只走 `uv sync`。
 
-### 4. 其他
+### 5. 其他
 
 - 移除过时的 SnowLuma 适配器数据目录挂载，插件改用统一数据目录（配合适配器 4.5.2 及以上）。
 - 修正表情包占位文案相关的陈旧测试断言（`pytests/message_test/session_message_test.py::test_emoji`）。
 
-> 改动集中在上述文件，上游其余代码保持原样。合并上游新版本时，`gemini_client.py`、`official_configs.py`、`emoji_manager.py`、`image_manager.py`、`utils_model.py`、`llm_service.py`、`Dockerfile`、`docker-compose.yml` 是主要冲突面。
+> 改动集中在上述文件，上游其余代码保持原样。合并上游新版本时，`gemini_client.py`、`official_configs.py`、`emoji_manager.py`、`image_manager.py`、`utils_model.py`、`llm_service.py`、`builtin_tool/send_emoji.py`、`Dockerfile`、`docker-compose.yml` 是主要冲突面。
 
 ## 本地开发与运行
 

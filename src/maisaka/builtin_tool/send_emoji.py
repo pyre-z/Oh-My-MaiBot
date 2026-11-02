@@ -348,6 +348,63 @@ async def _render_emoji_selection_system_prompt(
     return await prompt_manager.render_prompt(prompt_template)
 
 
+async def _try_plugin_select(
+    tool_ctx: BuiltinToolRuntimeContext,
+    reasoning: str,
+    context_texts: list[str],
+    selection_metadata: Optional[Dict[str, Any]] = None,
+) -> Optional[tuple[MaiEmoji | None, str]]:
+    """先问插件要一个表情哈希；插件没给就返回 None 走宿主视觉选图。"""
+
+    try:
+        from src.emoji_system.maisaka_tool import _get_runtime_manager
+
+        hook_result = await _get_runtime_manager().invoke_hook(
+            "emoji.maisaka.select",
+            stream_id=tool_ctx.runtime.session_id,
+            requested_emotion="",
+            reasoning=str(reasoning or ""),
+            context_texts=list(context_texts or []),
+        )
+    except Exception as exc:  # noqa: BLE001 - 插件链路失败必须回退宿主选图
+        logger.warning(f"{tool_ctx.runtime.log_prefix} 插件选图钩子异常，回退视觉选图: {exc}")
+        return None
+
+    picked_hash = str(hook_result.kwargs.get("selected_emoji_hash") or "").strip()
+    if not picked_hash:
+        return None
+
+    picked_emoji = next((item for item in emoji_manager.emojis if item.file_hash == picked_hash), None)
+    if picked_emoji is None:
+        logger.warning(f"{tool_ctx.runtime.log_prefix} 插件返回了不在表情库里的哈希，回退视觉选图: {picked_hash}")
+        return None
+
+    matched_emotion = str(hook_result.kwargs.get("matched_emotion") or "").strip()
+    description = (picked_emoji.description or "").strip()
+    logger.info(
+        f"{tool_ctx.runtime.log_prefix} 插件选定表情，跳过视觉选图 "
+        f"描述={description!r} 命中情绪={matched_emotion!r}"
+    )
+    if selection_metadata is not None:
+        selection_metadata["reason"] = f"插件语义选择：{description}"
+        selection_metadata["monitor_detail"] = _build_send_emoji_monitor_detail(
+            reasoning_text=description,
+            extra_sections=[
+                {
+                    "title": "插件选图",
+                    "content": "\n".join(
+                        [
+                            f"来源：emoji.maisaka.select",
+                            f"表情描述：{description or '无描述'}",
+                            f"命中情绪：{matched_emotion or '未命中'}",
+                        ]
+                    ),
+                }
+            ],
+        )
+    return picked_emoji, matched_emotion
+
+
 async def _select_emoji_with_sub_agent(
     tool_ctx: BuiltinToolRuntimeContext,
     reasoning: str,
@@ -356,6 +413,16 @@ async def _select_emoji_with_sub_agent(
     selection_metadata: Optional[Dict[str, Any]] = None,
 ) -> tuple[MaiEmoji | None, str]:
     """通过临时子代理从候选表情包中选出一个结果。"""
+
+    if global_config.emoji.plugin_selector:
+        plugin_pick = await _try_plugin_select(
+            tool_ctx,
+            reasoning,
+            [str(item) for item in context_texts or []],
+            selection_metadata,
+        )
+        if plugin_pick is not None:
+            return plugin_pick
 
     del reasoning, context_texts, sample_size
 

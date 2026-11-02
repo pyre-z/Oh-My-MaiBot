@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Tupl
 
 import asyncio
 import json
+import re
 import traceback
 
 from src.chat.replyer.replyer_manager import replyer_manager
@@ -64,6 +65,23 @@ def _normalize_reply_arguments(raw_arguments: dict[str, Any]) -> tuple[dict[str,
         )
 
     return parsed_arguments, ""
+
+
+_EMOJI_PLACEHOLDER_RE = re.compile(r"\[表情包[：:]?[^\[\]]*\]")
+"""模型模仿上下文时写出的表情占位符，例如 `[表情包: 描述]`、`[表情包：描述]`、`[表情包]`。"""
+
+
+def _strip_emoji_placeholders(reply_text: str) -> str:
+    """清掉回复正文里的表情占位符，避免把内部标记原样发给用户。"""
+
+    if not reply_text or "表情包" not in reply_text:
+        return reply_text
+    cleaned = _EMOJI_PLACEHOLDER_RE.sub("", reply_text)
+    if cleaned == reply_text:
+        return reply_text
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+    logger.warning(f"回复正文里出现了表情占位符，已清理：{reply_text[:120]!r}")
+    return cleaned
 
 
 def _use_expression_intent() -> bool:
@@ -584,12 +602,14 @@ async def execute_reply(
             "enable_chinese_typo": True,
         }
 
+    reply_text = _strip_emoji_placeholders(reply_text)
+
     if not reply_text:
         reply_result.completion.response_text = ""
         reply_result.monitor_detail = build_reply_monitor_detail(reply_result)
         return tool_ctx.build_failure_result(
             "reply",
-            "回复文本后处理前 Hook 返回了空回复。",
+            "回复正文里只有表情占位符，已经丢弃。发表情请调用 send_emoji，不要把它写进正文。",
             metadata=_build_monitor_metadata(reply_result, extension_execution.reply_id),
         )
 
