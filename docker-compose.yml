@@ -28,6 +28,8 @@ services:
       - ./data/MaiMBot-plugin-data:/MaiMBot/data/plugins # 插件持久数据目录，与插件源码目录隔离
       - ./data/MaiMBot/emoji:/data/emoji # 持久化表情包
       - ./data/MaiMBot/plugins:/MaiMBot/plugins # 插件目录
+      # SnowLuma 反向适配器把状态写在自己源码目录的 data/ 下，挂到统一持久目录，插件升级不会丢状态
+      - ./data/MaiMBot-plugin-data/pyre-z.snowluma-reverse-adapter:/MaiMBot/plugins/MaiBot-SnowLuma-Reverse-Adapter/data
       - ./data/MaiMBot/logs:/MaiMBot/logs # 日志目录
       - ./depends-data:/MaiMBot/depends-data # 运行时资源文件
       # - site-packages:/usr/local/lib/python3.13/site-packages # 持久化Python包，需要时启用
