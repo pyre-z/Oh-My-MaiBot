@@ -41,7 +41,7 @@
 
 # 运行/调试/构建/测试/依赖
 优先使用uv
-依赖项以 pyproject.toml 为准，要同步更新requirements.txt
+依赖项以 pyproject.toml 和 uv.lock 为准；改完依赖执行 uv lock 更新锁文件
 
 # Webui规范
 对于dashboard的前端测试，在细节改动，改动范围小时，别测试，别写测试，别build，直接快速做，避免无谓的时间浪费和代码浪费
