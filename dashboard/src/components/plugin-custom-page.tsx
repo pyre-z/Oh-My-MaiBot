@@ -15,6 +15,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { backendApi } from '@/lib/http'
 import { readPluginPageState } from '@/lib/plugin-api-arguments'
 import { customPageDocument, parseCustomPageRequest } from '@/lib/plugin-custom-page'
@@ -161,7 +162,7 @@ function CustomPageSession({
         if (operation.signal.aborted) return
         if (result.revision !== page.document_revision)
           throw new Error('Page changed; refresh the plugin registry')
-        setSource(customPageDocument(result.document, nonce))
+        setSource(customPageDocument(result.document, nonce, page.network ?? []))
       })
       .catch((error) => {
         if (!operation.signal.aborted) setError(String(error))
@@ -407,6 +408,8 @@ function CustomPageSession({
         </span>
         <div data-theme-probe="background" className="bg-background" />
         <div data-theme-probe="soft" className="bg-muted" />
+        <Switch data-theme-probe="switch" tabIndex={-1} />
+        <Switch data-theme-probe="switch-checked" defaultChecked tabIndex={-1} />
       </div>
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-lg font-semibold">{page.title}</h1>

@@ -1,0 +1,9 @@
+# 本地 WebUI 构建覆盖：使用 dashboard/ 源码构建出的 dist，而不是 wheel 里的预构建产物。
+# 用于承载插件自定义页的 CSP 调整（img/font/style 放开 https、connect-src 按插件声明）。
+# 回滚：删掉本文件后 docker rm -f maim-bot-core && docker compose create core && docker compose start core。
+services:
+  core:
+    environment:
+      - MAIBOT_WEBUI_USE_LOCAL_DASHBOARD=1
+    volumes:
+      - ./dashboard/dist:/MaiMBot/dashboard/dist:ro

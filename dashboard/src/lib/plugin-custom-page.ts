@@ -50,11 +50,18 @@ export function parseCustomPageRequest(value: unknown, page: CustomPage): Custom
 }
 
 // The policy precedes all plugin markup. Later meta policies can only restrict it further.
-// No same-origin permission, direct API/network access, forms, nested frames or workers.
-const POLICY =
-  "default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; " +
-  "img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; " +
-  "frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+// 外链图片/字体/样式表按页面声明的 network 之外的固定 https: 放开；脚本与表单仍锁死，
+// 网络请求只放行 network 里声明的 https 源（空则 connect-src 'none'）。
+export function contentSecurityPolicy(network: string[] = []): string {
+  const connect = network.length ? `connect-src ${network.join(' ')}` : "connect-src 'none'"
+  return (
+    "default-src 'none'; script-src 'unsafe-inline' blob:; " +
+    "style-src 'unsafe-inline' https:; img-src data: blob: https:; " +
+    "font-src data: https:; media-src data: blob: https:; " +
+    connect +
+    "; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+  )
+}
 
 const SDK = `(() => {
   let port, sequence = 0;
@@ -176,9 +183,9 @@ const SDK = `(() => {
   parent.postMessage({ type: 'maibot:ready', nonce: __MAIBOT_NONCE__ }, '*');
 })();`
 
-export function customPageDocument(html: string, nonce: string): string {
+export function customPageDocument(html: string, nonce: string, network: string[] = []): string {
   return (
-    `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${POLICY}">` +
+    `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy(network)}">` +
     `<meta name="referrer" content="no-referrer"><script>${SDK.replace('__MAIBOT_NONCE__', JSON.stringify(nonce))}</script></head><body>${html}</body></html>`
   )
 }

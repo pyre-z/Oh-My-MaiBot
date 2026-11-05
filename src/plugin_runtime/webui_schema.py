@@ -1,12 +1,14 @@
 """插件 WebUI 协议：共享 API 边界，分别定义简单组件页面与隔离 HTML 页面。"""
 
 from pathlib import Path
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 import hashlib
 import json
 import math
+import re
+from urllib.parse import urlsplit
 
 Identifier = Annotated[str, Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{0,63}$")]
 Text = Annotated[str, Field(max_length=4000)]
@@ -400,6 +402,46 @@ class ImageUpload(StrictModel):
     image_max_edge: Optional[int] = Field(default=None, ge=1, le=8192)
 
 
+def _normalize_network_origin(raw: str) -> str:
+    """校验并归一化插件页面允许访问的 https 源。"""
+
+    value = raw.strip()
+    if not value:
+        raise ValueError("network 不能包含空项")
+    if len(value) > 200:
+        raise ValueError("network 单项不能超过 200 字符")
+
+    parsed = urlsplit(value)
+    if parsed.scheme != "https":
+        raise ValueError(f"network 只接受 https 源：{value}")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError(f"network 只接受源，不能带用户信息、查询或片段：{value}")
+    if parsed.path not in ("", "/"):
+        raise ValueError(f"network 只接受源，不能带路径：{value}")
+
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ValueError(f"network 缺少主机名：{value}")
+    if host == "*":
+        raise ValueError("network 不允许裸通配符 *，请写成 https://*.example.com")
+    wildcard = host.startswith("*.")
+    base = host[2:] if wildcard else host
+    if not base or "*" in base:
+        raise ValueError(f"network 通配符只能出现在最左一段：{value}")
+    if not re.fullmatch(r"[a-z0-9.-]+", base):
+        raise ValueError(f"network 主机名含非法字符：{value}")
+
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError(f"network 端口非法：{value}") from error
+
+    netloc = f"*.{base}" if wildcard else base
+    if port is not None:
+        netloc = f"{netloc}:{port}"
+    return f"https://{netloc}"
+
+
 class CustomPage(Page):
     mode: Literal["custom"]
     entry: str = Field(min_length=1, max_length=200)
@@ -407,8 +449,18 @@ class CustomPage(Page):
     queries: Dict[Identifier, APIBinding] = Field(default_factory=dict, max_length=10)
     actions: Dict[Identifier, APIBinding] = Field(default_factory=dict, max_length=20)
     uploads: Dict[Identifier, ImageUpload] = Field(default_factory=dict, max_length=10)
+    # 页面允许 fetch 的目标源；空表示 connect-src 'none'。只接受 https 源，禁止裸通配符。
+    network: List[str] = Field(default_factory=list, max_length=8)
     # Runner 在线程读取产物；Host 保存已校验快照，不开放插件文件目录。
     document: str = Field(min_length=1, max_length=MAX_CUSTOM_DOCUMENT_BYTES)
+
+    @field_validator("network")
+    @classmethod
+    def validate_network(cls, values: List[str]) -> List[str]:
+        normalized = [_normalize_network_origin(item) for item in values]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("network 不能有重复源")
+        return normalized
 
     @property
     def document_revision(self) -> str:

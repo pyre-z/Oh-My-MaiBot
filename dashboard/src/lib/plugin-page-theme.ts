@@ -13,6 +13,14 @@ const APPEARANCE = [
   'line-height',
 ] as const
 
+const SWITCH_APPEARANCE = [
+  'background-color',
+  'background-image',
+  'border',
+  'border-radius',
+  'box-shadow',
+] as const
+
 export interface PluginPageContext {
   theme: string
   language: string
@@ -127,6 +135,31 @@ export function readPluginPageTheme(probes: HTMLElement, language: string): Plug
   for (const [name, selector] of Object.entries(rules)) {
     const sampled = samples[name]
     css += `${selector}{${APPEARANCE.map((property) => `${property}:${sampled.getPropertyValue(property)};`).join('')}}`
+  }
+  // 采样真实 Switch，供自定义页复刻同一套开关外观（三套主题各自不同）。
+  const switchTrack = probes.querySelector<HTMLElement>('[data-theme-probe="switch"]')
+  const switchChecked = probes.querySelector<HTMLElement>('[data-theme-probe="switch-checked"]')
+  const thumbOf = (element: HTMLElement | null) =>
+    element?.querySelector<HTMLElement>('[data-dashboard-switch-thumb="true"]') ?? null
+  const thumb = thumbOf(switchTrack)
+  if (switchTrack && switchChecked && thumb && thumbOf(switchChecked)) {
+    const trackRect = switchTrack.getBoundingClientRect()
+    const thumbRect = thumb.getBoundingClientRect()
+    const track = getComputedStyle(switchTrack)
+    const checked = getComputedStyle(switchChecked)
+    const knob = getComputedStyle(thumb)
+    // 行程按内外径算，比读两个探针的位移更稳（探针可能因过渡动画量到中间值）。
+    const borderX = parseFloat(track.borderLeftWidth) + parseFloat(track.borderRightWidth)
+    const travel = Math.max(0, Math.round(trackRect.width - thumbRect.width - borderX))
+    const appearance = (style: CSSStyleDeclaration) =>
+      SWITCH_APPEARANCE.map((property) => `${property}:${style.getPropertyValue(property)};`).join('')
+    css += `
+  .maibot-switch{box-sizing:border-box;display:inline-flex;align-items:center;width:${trackRect.width}px;height:${trackRect.height}px;padding:0;cursor:pointer;appearance:none;transition:background-color .15s,box-shadow .15s;${appearance(track)}}
+  .maibot-switch[aria-checked="true"]{background-color:${checked.backgroundColor};background-image:${checked.backgroundImage};box-shadow:${checked.boxShadow}}
+  .maibot-switch:disabled{cursor:not-allowed;opacity:.5}
+  .maibot-switch:focus-visible{outline:2px solid var(--maibot-primary);outline-offset:2px}
+  .maibot-switch-thumb{display:block;box-sizing:border-box;width:${thumbRect.width}px;height:${thumbRect.height}px;transform:translateX(0);transition:transform .15s;${appearance(knob)}}
+  .maibot-switch[aria-checked="true"] .maibot-switch-thumb{transform:translateX(${travel}px)}`
   }
   css += `
   .maibot-page{margin:0;color:var(--maibot-foreground);background-color:var(--maibot-background);background-image:${texture};background-size:${dashboardStyle === 'millennium' ? '6px 6px' : variable('--retro-paper-texture-size', 'auto')};font-family:var(--maibot-font-body)}

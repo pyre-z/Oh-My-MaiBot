@@ -109,6 +109,7 @@ export interface CustomPage extends Page {
   entry: string
   document_revision: string
   layout: 'document' | 'viewport'
+  network?: string[]
   uploads: Record<string, { action: string; image_max_edge?: number | null }>
   queries: Record<string, APIBinding>
   actions: Record<string, APIBinding>

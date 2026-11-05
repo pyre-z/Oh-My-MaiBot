@@ -74,4 +74,18 @@ describe('custom page boundary', () => {
     expect(html).toContain('nonce: "instance-token"')
     expect(html).not.toContain('allow-same-origin')
   })
+
+  it('opens external images, fonts and styles but keeps scripts and forms locked', () => {
+    const html = customPageDocument('<p>plugin</p>', 'instance-token', [
+      'https://api.example.com',
+      'https://*.qpic.cn',
+    ])
+    expect(html).toContain("style-src 'unsafe-inline' https:")
+    expect(html).toContain('img-src data: blob: https:')
+    expect(html).toContain('font-src data: https:')
+    expect(html).toContain('connect-src https://api.example.com https://*.qpic.cn')
+    expect(html).toContain("script-src 'unsafe-inline' blob:;")
+    expect(html).not.toContain("script-src 'unsafe-inline' blob: https:")
+    expect(html).toContain("form-action 'none'")
+  })
 })
