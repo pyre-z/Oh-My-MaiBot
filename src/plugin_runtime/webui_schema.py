@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import re
+import warnings
 from urllib.parse import urlsplit
 
 Identifier = Annotated[str, Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{0,63}$")]
@@ -332,6 +333,18 @@ class Page(StrictModel):
     placement: Literal["sidebar", "workspace"] = "sidebar"
     icon: Literal["puzzle", "chart", "settings", "database", "list"] = "puzzle"
 
+    @field_validator("placement")
+    @classmethod
+    def normalize_legacy_placement(cls, value: Literal["sidebar", "workspace"]) -> Literal["sidebar"]:
+        """旧插件的顶栏页面现在统一进入侧栏。"""
+        if value == "workspace":
+            warnings.warn(
+                'webui.json 的 placement="workspace" 已停用，页面已转入侧栏。请删除 placement 字段。',
+                UserWarning,
+                stacklevel=2,
+            )
+        return "sidebar"
+
 
 class DeclarativePage(Page):
     mode: Literal["declarative"] = "declarative"
@@ -524,8 +537,6 @@ class WebUIExtension(StrictModel):
     def validate_pages(self) -> "WebUIExtension":
         if len({page.id for page in self.pages}) != len(self.pages):
             raise ValueError("页面 ID 重复")
-        if any(page.placement == "workspace" for page in self.pages) and self.workspace_title is None:
-            raise ValueError("顶部工作区必须声明 workspace_title")
         total = 0
         for page in self.pages:
             bindings = [*page.queries.values(), *page.actions.values()]
