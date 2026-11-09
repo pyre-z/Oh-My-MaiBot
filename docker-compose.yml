@@ -3,11 +3,11 @@ services:
     container_name: maim-bot-core
     stop_grace_period: 90s # 宿主最多等待每个 Bot 75 秒，再保留强制退出时间
     #### prod ####
-    # 本地从源码构建：上游 v1.3.19 源码 + ffmpeg（gif-vision 插件转码依赖 ffmpeg/ffprobe）
+    # 本地从源码构建：上游 v1.4.3 源码 + ffmpeg（动图抽帧/转码依赖 ffmpeg/ffprobe）
     build:
       context: .
       dockerfile: Dockerfile
-    image: oh-my-maibot:1.3.19
+    image: oh-my-maibot:1.4.3-fork.0
     # image: sengokucola/maibot:latest
     #### dev ####
     # image: sengokucola/maibot:dev

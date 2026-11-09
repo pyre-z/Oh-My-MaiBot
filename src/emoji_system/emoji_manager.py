@@ -100,33 +100,6 @@ def register_emoji_hook_specs(registry: HookSpecRegistry) -> list[HookSpec]:
                 allow_abort=True,
                 allow_kwargs_mutation=True,
             ),
-            HookSpec(
-                name="emoji.maisaka.select",
-                description=(
-                    "send_emoji 视觉选图前触发；插件返回 selected_emoji_hash 时直接采用该表情并跳过拼图视觉选图。"
-                    "插件不返回或出错时回退宿主原流程。"
-                ),
-                parameters_schema=build_object_schema(
-                    {
-                        "stream_id": {"type": "string", "description": "目标会话 ID。"},
-                        "requested_emotion": {"type": "string", "description": "请求的目标情绪标签。"},
-                        "reasoning": {"type": "string", "description": "本次发送表情的推理理由。"},
-                        "context_texts": {
-                            **string_array_schema,
-                            "description": "最近聊天上下文文本列表。",
-                        },
-                        "selected_emoji_hash": {
-                            "type": "string",
-                            "description": "插件选中的表情哈希；留空表示交给宿主选图。",
-                        },
-                        "matched_emotion": {"type": "string", "description": "插件给出的命中情绪，可留空。"},
-                    },
-                    required=["stream_id", "requested_emotion", "reasoning", "context_texts"],
-                ),
-                default_timeout_ms=8000,
-                allow_abort=False,
-                allow_kwargs_mutation=True,
-            ),
         ]
     )
 
