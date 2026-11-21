@@ -69,7 +69,10 @@ class PrivateChatScene(ChatScene):
         return {"platform": session.platform, "user_id": session.user_id}
 
     def allows_focus(self, session_id: str) -> bool:
-        return global_config.experimental.focus_on_private and not ChatConfigUtils.is_private_reply_paused(session_id)
+        return (
+            global_config.experimental.focus_on_private
+            and not ChatConfigUtils.is_private_reply_paused(session_id)
+        )
 
     def allows_memory_from(self, source_is_group: bool) -> bool:
         return not source_is_group or global_config.a_memorix.integration.heuristic_memory_group_to_private_enabled

@@ -93,6 +93,7 @@ export interface FlowStepEvent {
 }
 
 export interface LlmRetryEvent {
+  replayed?: boolean
   session_id: string
   platform?: string
   user_id?: string | null
@@ -108,6 +109,7 @@ export interface LlmRetryEvent {
 }
 
 export interface LlmErrorEvent {
+  replayed?: boolean
   session_id: string
   platform?: string
   user_id?: string | null
@@ -167,7 +169,7 @@ export interface MaisakaReplyPreview {
 }
 
 export interface MaisakaMessageMedia {
-  kind: 'image' | 'emoji'
+  kind: 'image' | 'emoji' | 'voice'
   hash: string
   text: string
   url: string

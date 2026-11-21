@@ -71,6 +71,7 @@ import { ExtraParamsDialog } from '@/components/ui/extra-params-dialog'
 import { ModelTable, ModelCardList } from './model/components'
 import { TaskAssignmentBoard } from './model/components/TaskAssignmentBoard'
 import { taskShortName } from './model/taskMeta'
+import { SpeechTemplateForm } from './model/components/SpeechTemplateForm'
 import { AddModelMenu, type ModelCreationType } from './model/components/AddModelMenu'
 import { EmbeddingBuildProgress } from './model/components/EmbeddingBuildProgress'
 import { TaskRuntimeSummary } from './model/components/TaskRuntimeSummary'
@@ -90,6 +91,7 @@ import {
 import { findTemplateByBaseUrl, resolveThinkingFormatForModel } from './providerTemplates'
 import {
   getDeepSeekReasoningEffort,
+  getDeepSeekSearchTool,
   isDeepSeekThinkingEnabled,
   isDeepSeekWebSearchEnabled,
   setDeepSeekReasoningEffort,
@@ -150,6 +152,7 @@ function ModelConfigPageContent() {
 
   // 核心领域 hook：models / apiProviders / model_task_config 三份草稿及其全部编排
   const mc = useModelConfig()
+  const [speechProviderDraft, setSpeechProviderDraft] = useState<APIProvider | null>(null)
   const [webSearchEditor, setWebSearchEditor] = useState<{ name: string | null } | null>(null)
   const {
     // 草稿态
@@ -247,7 +250,7 @@ function ModelConfigPageContent() {
       filteredModels.filter((model) => {
         if (modelKindFilter === 'used') return isModelUsed(model.name)
         if (modelKindFilter === 'visual') return model.model_type === 'llm' && Boolean(model.visual)
-        if (modelKindFilter === 'embedding') return model.model_type !== 'llm'
+        if (modelKindFilter === 'embedding') return model.model_type === 'embedding' || model.model_type === 'image_embedding'
         return true
       }),
     [filteredModels, isModelUsed, modelKindFilter]
@@ -436,16 +439,17 @@ function ModelConfigPageContent() {
   const [thinkingProbeRunning, setThinkingProbeRunning] = useState(false)
   const modelExtraParams = editingModel?.extra_params || {}
   const editingModelType = editingModel?.model_type
+  const editingSpeechModel = editingModel?.model_type === 'asr' || editingModel?.model_type === 'tts' ? editingModel : null
   const editingModelIsEmbedding = editingModelType === 'embedding' || editingModelType === 'image_embedding'
   const deepSeekClientType: DeepSeekClientType | null =
-    !editingModelIsEmbedding && selectedThinkingTemplate?.id === 'deepseek' &&
+    editingModelType === 'llm' && selectedThinkingTemplate?.id === 'deepseek' &&
     (selectedClientType === 'openai' || selectedClientType === 'openai_responses')
       ? selectedClientType
       : null
   // 预置思考格式直接匹配当前提供商地址；无预置时显示自动测试入口。
   // DeepSeek 有专用段（含 Responses 客户端的 reasoning.effort 与联网搜索），不走通用开关
   const thinkingFormatActive: ThinkingFormatConfig | null =
-    !editingModelIsEmbedding && selectedThinkingTemplate?.id !== 'deepseek'
+    editingModelType === 'llm' && selectedThinkingTemplate?.id !== 'deepseek'
       ? resolveThinkingFormatForModel(selectedThinkingTemplate, editingModel?.model_identifier ?? '')
       : null
   const thinkingEnabled = thinkingFormatActive
@@ -467,9 +471,14 @@ function ModelConfigPageContent() {
   const thinkingExtraParamsError = thinkingFormatActive
     ? validateThinkingParams(modelExtraParams, thinkingFormatActive)
     : null
-  const deepSeekWebSearchEnabled = deepSeekClientType === 'openai_responses'
-    ? isDeepSeekWebSearchEnabled(modelExtraParams)
-    : false
+  const modelIdentifier = editingModel?.model_identifier.trim() ?? ''
+  const deepSeekSearchTool = deepSeekClientType ? getDeepSeekSearchTool(modelIdentifier, deepSeekClientType) : null
+  const deepSeekWebSearchEnabled = isDeepSeekWebSearchEnabled(modelExtraParams)
+  const deepSeekSearchHint = deepSeekSearchTool
+    ? `由 DeepSeek 在服务端搜索（${deepSeekSearchTool}）`
+    : !modelIdentifier ? '先选择模型标识符'
+      : modelIdentifier === 'deepseek-v4-pro' ? 'DeepSeek V4 Pro 的联网搜索需要 Responses API'
+        : '当前模型未提供原生联网搜索'
   const deepSeekThinkingEnabled = deepSeekClientType
     ? isDeepSeekThinkingEnabled(modelExtraParams, deepSeekClientType)
     : false
@@ -477,7 +486,7 @@ function ModelConfigPageContent() {
     ? getDeepSeekReasoningEffort(modelExtraParams, deepSeekClientType)
     : 'high'
   const deepSeekExtraParamsError = deepSeekClientType
-    ? validateDeepSeekExtraParams(modelExtraParams, deepSeekClientType)
+    ? validateDeepSeekExtraParams(modelExtraParams, deepSeekClientType, deepSeekSearchTool)
     : null
   const deepSeekToolsInvalid =
     modelExtraParams.tools !== undefined && !Array.isArray(modelExtraParams.tools)
@@ -509,6 +518,7 @@ function ModelConfigPageContent() {
     preferredProvider?: string,
     modelType: ModelInfo['model_type'] = 'llm'
   ) => {
+    setSpeechProviderDraft(null)
     setModelNameTouched(false)
     mc.openEditDialog(model, index, () => setAdvancedModelSettingsVisible(false), preferredProvider, modelType)
   }
@@ -530,10 +540,10 @@ function ModelConfigPageContent() {
 
   // 当选择的提供商变化时，获取模型列表
   useEffect(() => {
-    if (editDialogOpen && editingModel?.api_provider) {
+    if (editDialogOpen && !editingSpeechModel && editingModel?.api_provider) {
       fetchModelsForProvider(editingModel.api_provider)
     }
-  }, [editDialogOpen, editingModel?.api_provider, fetchModelsForProvider])
+  }, [editDialogOpen, editingSpeechModel, editingModel?.api_provider, fetchModelsForProvider])
 
   const handleActiveTabChange = (value: string) => {
     const nextTab = MODEL_CONFIG_TABS.includes(value as ModelConfigTab)
@@ -690,47 +700,49 @@ function ModelConfigPageContent() {
                 模型库
               </DashboardFolderTab>
             </DashboardFolderTabBar>
-            <div className="flex w-full min-w-0 items-center gap-2 pb-2 sm:ml-auto sm:w-auto">
-              <SplitDropdownSelect
-                value="active"
-                label="Bot 任务配置副本"
-                controlSize="sm"
-                icon={<History />}
-                className="flex-1 sm:w-[190px] sm:flex-none"
-                disabled={versionsLoading || saving || autoSaving || Boolean(switchingConfigVersion)}
-                onValueChange={(value) => {
-                  if (value !== 'active') {
-                    void handleSwitchConfigVersion(value)
-                  }
-                }}
-                options={[
-                  { value: 'active', label: activeConfigVersion?.label || '默认配置' },
-                  ...configVersions.map((version) => ({
-                    value: version.id,
-                    label: version.label,
-                    description: formatVersionTime(version.modified_at),
-                    disabled: !version.valid,
-                  })),
-                ]}
-                actions={[
-                  {
-                    id: 'save',
-                    label: '保存副本',
-                    ariaLabel: '保存当前配置副本',
-                    icon: creatingConfigVersion ? <Loader2 className="animate-spin" /> : <Copy />,
-                    disabled: saving || autoSaving || creatingConfigVersion,
-                    onSelect: () => setCreateVersionDialogOpen(true),
-                  },
-                  {
-                    id: 'manage',
-                    label: '管理副本',
-                    ariaLabel: '管理配置副本',
-                    icon: <History />,
-                    onSelect: () => setManageVersionsDialogOpen(true),
-                  },
-                ]}
-              />
-            </div>
+            {activeTab === 'tasks' && (
+              <div className="flex w-full min-w-0 items-center gap-2 pb-2 sm:ml-auto sm:w-auto">
+                <SplitDropdownSelect
+                  value="active"
+                  label="分工方案"
+                  controlSize="sm"
+                  icon={<History />}
+                  className="flex-1 sm:w-[190px] sm:flex-none"
+                  disabled={versionsLoading || saving || autoSaving || Boolean(switchingConfigVersion)}
+                  onValueChange={(value) => {
+                    if (value !== 'active') {
+                      void handleSwitchConfigVersion(value)
+                    }
+                  }}
+                  options={[
+                    { value: 'active', label: activeConfigVersion?.label || '默认配置' },
+                    ...configVersions.map((version) => ({
+                      value: version.id,
+                      label: version.label,
+                      description: formatVersionTime(version.modified_at),
+                      disabled: !version.valid,
+                    })),
+                  ]}
+                  actions={[
+                    {
+                      id: 'save',
+                      label: '保存方案',
+                      ariaLabel: '保存当前分工方案',
+                      icon: creatingConfigVersion ? <Loader2 className="animate-spin" /> : <Copy />,
+                      disabled: saving || autoSaving || creatingConfigVersion,
+                      onSelect: () => setCreateVersionDialogOpen(true),
+                    },
+                    {
+                      id: 'manage',
+                      label: '管理方案',
+                      ariaLabel: '管理分工方案',
+                      icon: <History />,
+                      onSelect: () => setManageVersionsDialogOpen(true),
+                    },
+                  ]}
+                />
+              </div>
+            )}
           </div>
           {/* 厂商与模型合并配置视图 */}
           <TabsContent
@@ -767,10 +779,11 @@ function ModelConfigPageContent() {
 
               <section
                 className="flex min-h-0 min-w-0 flex-col gap-2 lg:h-full lg:overflow-hidden"
+                data-model-library-list="true"
                 data-tour="models-tab-trigger"
               >
           {/* 列表标签、筛选键、搜索和添加入口排在同一行 */}
-          <div data-library-label="true" className="flex-wrap gap-y-2">
+          <div data-library-label="true" data-model-library-toolbar="true" className="flex-wrap gap-y-2">
             <b>MODELS</b>
             <h2>模型列表</h2>
             <div role="group" aria-label="筛选模型" data-library-filters="true" className="ml-1">
@@ -787,13 +800,25 @@ function ModelConfigPageContent() {
                 </Button>
               ))}
             </div>
-            <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
+            <div data-model-library-filter-select="true">
+              <Select value={modelKindFilter} onValueChange={(value) => setModelKindFilter(value as ModelKindFilter)}>
+                <SelectTrigger aria-label="筛选模型" className="h-8 w-24">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MODEL_KIND_FILTERS.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div data-model-library-tools="true" className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
               {searchQuery && (
-                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                <span data-model-library-result-count="true" className="text-xs text-muted-foreground whitespace-nowrap">
                   找到 {shownModels.length} 个
                 </span>
               )}
-              <div className="relative w-full sm:w-60">
+              <div data-model-library-search="true" className="relative w-full sm:w-60">
                 <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder="搜索名称、标识符或厂商"
@@ -805,16 +830,21 @@ function ModelConfigPageContent() {
                 />
               </div>
               {selectedModels.size > 0 && (
-                <Button onClick={openBatchDeleteDialog} size="sm" variant="destructive">
+                <Button
+                  onClick={openBatchDeleteDialog}
+                  size="sm"
+                  variant="destructive"
+                  className="shrink-0"
+                  aria-label={`批量删除 (${selectedModels.size})`}
+                >
                   <Trash2 className="h-4 w-4" strokeWidth={2} fill="none" />
-                  批量删除 ({selectedModels.size})
+                  <span data-model-library-batch-label="true">批量删除</span> ({selectedModels.size})
                 </Button>
               )}
-              {/* 手机上由页头右上角的「+」添加 */}
               <AddModelMenu
                 onAdd={openAddModelDialog}
                 disabled={apiProviders.length === 0}
-                className="hidden md:inline-flex"
+                className="inline-flex shrink-0"
                 dataTour="add-model-button"
               />
             </div>
@@ -939,16 +969,30 @@ function ModelConfigPageContent() {
               }}
               onChange={updateTaskConfig}
               onAddWebService={() => setWebSearchEditor({ name: null })}
+              onConfigureMaiReplier={mc.handleConfigureMaiReplier}
               hasProviders={providers.length > 0}
               onStartTour={handleStartTour}
               tourRunning={tourIsRunning}
               fallbackLabel={(field) => resolveFieldLabel(field, i18n.language)}
               renderExtra={(task) => (
                 <>
+                  {(task === 'voice' || task === 'tts') && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setTaskDrawerTask(null)
+                        handleActiveTabChange('configuration')
+                        openAddModelDialog(task === 'tts' ? 'tts' : 'asr')
+                      }}
+                    >
+                      {task === 'tts' ? '添加语音合成模型' : '添加语音识别模型'}
+                    </Button>
+                  )}
                   {task === 'embedding' && (
                     <EmbeddingBuildProgress selectedEmbeddingModel={taskConfig.embedding?.model_list[0] ?? ''} />
                   )}
-                  {task !== 'web_search' && (taskConfig[task]?.model_list.length ?? 0) > 0 && (
+                  {task !== 'web_search' && task !== 'tts' && (taskConfig[task]?.model_list.length ?? 0) > 0 && (
                     <TaskUsageStats
                       key={task}
                       taskName={task}
@@ -974,18 +1018,18 @@ function ModelConfigPageContent() {
       <Dialog open={createVersionDialogOpen} onOpenChange={setCreateVersionDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>保存Bot 任务配置副本</DialogTitle>
+            <DialogTitle>保存分工方案</DialogTitle>
             <DialogDescription>
-              当前启用的 model_config.toml 会复制到 config/versions/model，之后可随时切换回来。
+              保存当前 Bot 各项任务的模型选择和参数，之后可以切换回来。
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
-            <Label htmlFor="model_config_version_label">副本名称</Label>
+            <Label htmlFor="model_config_version_label">方案名称</Label>
             <Input
               id="model_config_version_label"
               value={newVersionLabel}
               onChange={(event) => setNewVersionLabel(event.target.value)}
-              placeholder="例如：生产环境Bot 任务配置副本"
+              placeholder="例如：日常聊天"
               maxLength={80}
             />
           </div>
@@ -1003,7 +1047,7 @@ function ModelConfigPageContent() {
               disabled={creatingConfigVersion}
               onClick={handleCreateVersion}
             >
-              {creatingConfigVersion ? '保存中...' : '保存副本'}
+              {creatingConfigVersion ? '保存中...' : '保存方案'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1012,9 +1056,9 @@ function ModelConfigPageContent() {
       <Dialog open={manageVersionsDialogOpen} onOpenChange={setManageVersionsDialogOpen}>
         <DialogContent className="max-w-[95vw] sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Bot 任务配置副本</DialogTitle>
+            <DialogTitle>分工方案</DialogTitle>
             <DialogDescription>
-              副本保存当前 Bot 的任务选择和参数，不包含公共供应商、模型与联网服务定义；切换前会自动归档当前配置。
+              切换时会自动保存当前分工方案。所有方案共用同一个模型库。
             </DialogDescription>
           </DialogHeader>
           <DialogBody viewportClassName="max-h-[60vh] pr-3 sm:pr-4">
@@ -1031,7 +1075,7 @@ function ModelConfigPageContent() {
 
               {configVersions.length === 0 ? (
                 <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
-                  暂无未启用副本
+                  暂无其他分工方案
                 </div>
               ) : (
                 configVersions.map((version) => (
@@ -1063,7 +1107,7 @@ function ModelConfigPageContent() {
                         variant="destructive"
                         size="icon"
                         className="h-9 w-9"
-                        aria-label={`删除副本 ${version.label}`}
+                        aria-label={`删除方案 ${version.label}`}
                         onClick={() => setDeletingVersionId(version.id)}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -1269,7 +1313,7 @@ function ModelConfigPageContent() {
                   </div>
                 )}
                 <p className="font-medium text-foreground">
-                  关联模型会从模型列表和任务分配中移除，此操作无法撤销。
+                  关联模型会从共享模型列表和所有实例的任务分配中移除，此操作无法撤销。
                 </p>
               </div>
             </AlertDialogDescription>
@@ -1300,10 +1344,10 @@ function ModelConfigPageContent() {
         >
           <DialogHeader>
             <DialogTitle>
-              {editingIndex !== null ? '编辑模型' : editingModelIsEmbedding ? '添加嵌入模型' : '添加 LLM 模型'}
+              {editingIndex !== null ? '编辑模型' : editingModelType === 'tts' ? '添加语音合成模型' : editingModelType === 'asr' ? '添加语音识别' : editingModelIsEmbedding ? '添加嵌入模型' : '添加 LLM 模型'}
             </DialogTitle>
             {/* 「高级」开关浮在右上角，与 DialogContent 内置的关闭按钮同行 */}
-            {!editingModelIsEmbedding && (
+            {editingModelType === 'llm' && (
             <label
               htmlFor="advanced_model_settings"
               className="absolute top-4 right-12 flex cursor-pointer items-center gap-2 text-sm font-semibold"
@@ -1319,6 +1363,15 @@ function ModelConfigPageContent() {
           </DialogHeader>
 
           <DialogBody type="auto" data-form-scroll="true" viewportClassName="min-h-0 flex-1 pr-0 [&>div]:!block">
+          {editingSpeechModel ? (
+            <SpeechTemplateForm model={editingSpeechModel} providers={apiProviders} errors={formErrors} draftProvider={speechProviderDraft}
+              onCreateProvider={(provider) => saveProviderEdit(provider, null)}
+              onChange={(next, draft) => {
+                setEditingModel(next)
+                setSpeechProviderDraft(draft)
+                setFormErrors({})
+              }} />
+          ) : (
           <FormColumns className="py-2 sm:py-3">
           <FormColumn>
           <FormSection title="模型">
@@ -1334,7 +1387,7 @@ function ModelConfigPageContent() {
                 <SelectTrigger id="model_type"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="embedding">文本嵌入模型</SelectItem>
-                  <SelectItem value="image_embedding">图片嵌入模型</SelectItem>
+                  <SelectItem value="image_embedding">多模态嵌入模型</SelectItem>
                 </SelectContent>
               </Select>
             </FormRow>
@@ -1479,17 +1532,15 @@ function ModelConfigPageContent() {
                 <FormRow label="联网搜索" htmlFor="deepseek_web_search">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-xs text-muted-foreground">
-                      {deepSeekClientType === 'openai_responses'
-                        ? '添加 DeepSeek 原生 web_search 工具'
-                        : '仅 DeepSeek Responses API 支持'}
+                      {deepSeekSearchHint}
                     </span>
                     <Switch
                       id="deepseek_web_search"
                       aria-label="启用联网搜索"
                       checked={deepSeekWebSearchEnabled}
-                      disabled={deepSeekClientType !== 'openai_responses' || deepSeekToolsInvalid}
+                      disabled={(!deepSeekSearchTool && !deepSeekWebSearchEnabled) || deepSeekToolsInvalid}
                       onCheckedChange={(checked) => updateModelExtraParams((params) =>
-                        setDeepSeekWebSearchEnabled(params, checked)
+                        setDeepSeekWebSearchEnabled(params, checked ? deepSeekSearchTool : null)
                       )}
                     />
                   </div>
@@ -1945,6 +1996,53 @@ function ModelConfigPageContent() {
 
             {advancedModelSettingsVisible && (
               <>
+                <FormRow label="最大图片数量" htmlFor="max_images">
+                  <Input
+                    id="max_images"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={editingModel?.max_images ?? 0}
+                    onChange={(e) => {
+                      const value = Number(e.target.value)
+                      if (Number.isInteger(value) && value >= 0) {
+                        setEditingModel((prev) => prev ? { ...prev, max_images: value } : null)
+                      }
+                    }}
+                    className="h-8 w-28 text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">0 表示不限制。包含长图切片，超限时保留最近的图片。</p>
+                </FormRow>
+
+                {([
+                  ['image_max_side', '图片最大边长', 8000],
+                  ['image_min_side', '图片最小边长', 1],
+                ] as const).map(([field, label, defaultValue]) => (
+                  <FormRow key={field} label={label} htmlFor={field}>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id={field}
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={editingModel?.[field] ?? defaultValue}
+                        onChange={(e) => {
+                          const value = Number(e.target.value)
+                          if (Number.isInteger(value) && value >= 1) {
+                            setEditingModel((prev) => prev ? { ...prev, [field]: value } : null)
+                          }
+                        }}
+                        className="h-8 w-28 text-sm"
+                      />
+                      <FormUnit>像素</FormUnit>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {field === 'image_max_side'
+                        ? '限制长边，超限图片按比例缩小或分段。'
+                        : '约束短边，小图按比例放大，受长边上限约束时补边。不得超过最大边长。'}
+                    </p>
+                  </FormRow>
+                ))}
                 <FormRow label="强制流式" htmlFor="force_stream_mode">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-xs text-muted-foreground">用于必须通过流式响应返回内容的模型</span>
@@ -2015,6 +2113,7 @@ function ModelConfigPageContent() {
           </FormSection>
           </FormColumn>
           </FormColumns>
+          )}
           </DialogBody>
 
           <DialogFooter className="flex-row justify-end gap-2 space-x-0">
@@ -2029,8 +2128,10 @@ function ModelConfigPageContent() {
             <Button
               data-dialog-action="confirm"
               className="flex-1 sm:flex-none"
-              onClick={handleSaveEdit}
-              disabled={saving || thinkingProbeRunning || Boolean(deepSeekExtraParamsError) || Boolean(thinkingExtraParamsError)}
+              onClick={() => void handleSaveEdit(editingSpeechModel ? speechProviderDraft : null)}
+              disabled={saving || thinkingProbeRunning || Boolean(deepSeekExtraParamsError) || Boolean(thinkingExtraParamsError)
+                || Boolean(editingSpeechModel && (!editingSpeechModel.model_identifier || !editingSpeechModel.api_provider
+                  || (speechProviderDraft && !speechProviderDraft.api_key.trim())))}
               data-tour="model-save-button"
             >
               {saving ? '保存中...' : '保存'}
@@ -2110,7 +2211,7 @@ function ModelConfigPageContent() {
         value={editingModel?.extra_params || {}}
         validate={
           deepSeekClientType
-            ? (params) => validateDeepSeekExtraParams(params, deepSeekClientType)
+            ? (params) => validateDeepSeekExtraParams(params, deepSeekClientType, deepSeekSearchTool)
             : thinkingFormatActive
               ? (params) => validateThinkingParams(params, thinkingFormatActive)
               : undefined
@@ -2125,9 +2226,9 @@ function ModelConfigPageContent() {
       <AlertDialog open={deletingVersionId !== null} onOpenChange={(open) => !open && setDeletingVersionId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>删除Bot 任务配置副本</AlertDialogTitle>
+            <AlertDialogTitle>删除分工方案</AlertDialogTitle>
             <AlertDialogDescription>
-              确定要删除副本「{deletingVersion?.label || deletingVersionId}」吗？此操作不会影响当前启用配置，但无法撤销。
+              确定要删除分工方案「{deletingVersion?.label || deletingVersionId}」吗？删除后无法恢复。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -2164,7 +2265,10 @@ function ModelConfigPageContent() {
           label="添加"
           items={[
             { label: '添加 LLM 模型', onSelect: () => openAddModelDialog('llm'), disabled: apiProviders.length === 0 },
+            { label: '添加语音合成', onSelect: () => openAddModelDialog('tts') },
+            { label: '添加语音识别', onSelect: () => openAddModelDialog('asr') },
             { label: '添加嵌入模型', onSelect: () => openAddModelDialog('embedding'), disabled: apiProviders.length === 0 },
+            { label: '添加多模态嵌入模型', onSelect: () => openAddModelDialog('image_embedding'), disabled: apiProviders.length === 0 },
             { label: '添加 LLM 模型提供商', onSelect: () => openProviderDialog(null, null) },
             { label: '添加联网搜索', onSelect: () => setWebSearchEditor({ name: null }) },
           ]}

@@ -41,12 +41,12 @@ import type { ModelInfo, ModelPricePeriod, ModelTaskConfig, ProviderConfig, Task
 import { serializeModel } from '../serializeModel'
 import type { APIProvider, DeleteConfirmState } from '../../modelProvider/types'
 import { cleanProviderData } from '../../modelProvider/utils'
-import { PROVIDER_TEMPLATES } from '../../providerTemplates'
+import { findTemplateByBaseUrl, PROVIDER_TEMPLATES } from '../../providerTemplates'
 import { useModelAutoSave } from './useModelAutoSave'
 import { useEmbeddingWarning, type PendingEmbeddingUpdate } from './useEmbeddingWarning'
 import { readWebSearchConfig, type WebSearchConfig } from '../../webSearch/types'
 
-const ADVANCED_MODEL_TASK_NAMES = new Set(['memory', 'learner', 'emoji', 'voice'])
+const ADVANCED_MODEL_TASK_NAMES = new Set(['memory', 'learner', 'voice', 'tts'])
 
 /** Unwrap backend `{ success, config }` envelope to get the actual config */
 function unwrapModelConfig(data: unknown): Record<string, unknown> {
@@ -176,7 +176,7 @@ export function useModelConfig() {
   const autoSaving = modelAutoSaving || providerAutoSaving
   const hasUnsavedChanges = modelHasUnsavedChanges || providerHasUnsavedChanges
 
-  // ---- 模型配置文件副本 ----
+  // ---- 分工方案 ----
   const [activeConfigVersion, setActiveConfigVersion] = useState<ModelConfigVersionInfo | null>(
     null
   )
@@ -402,9 +402,9 @@ export function useModelConfig() {
       setActiveConfigVersion(versionResult.active_version)
       setConfigVersions(versionResult.versions)
     } catch (error) {
-      console.error('加载模型配置副本失败:', error)
+      console.error('加载分工方案失败:', error)
       toast({
-        title: '副本列表加载失败',
+        title: '分工方案列表加载失败',
         description: (error as Error).message,
         variant: 'destructive',
       })
@@ -439,7 +439,7 @@ export function useModelConfig() {
       setWebConfig(readWebSearchConfig(config.web))
       const modelList = (config.models as ModelInfo[]) || []
       for (const model of modelList) {
-        if (!['llm', 'embedding', 'image_embedding'].includes(model.model_type)) {
+        if (!['llm', 'embedding', 'image_embedding', 'asr', 'tts'].includes(model.model_type)) {
           throw new Error(`模型 ${model.name} 缺少或包含无效的 model_type，请检查配置升级是否完成`)
         }
       }
@@ -474,7 +474,7 @@ export function useModelConfig() {
         setActiveConfigVersion(versionsResult.value.active_version)
         setConfigVersions(versionsResult.value.versions)
       } else {
-        console.error('加载模型配置副本失败:', versionsResult.reason)
+        console.error('加载分工方案失败:', versionsResult.reason)
       }
 
       // 检查任务配置问题
@@ -525,7 +525,7 @@ export function useModelConfig() {
     )
   }, [])
 
-  const removeModelsForProviders = useCallback(
+  const removeModelsAndTaskReferences = useCallback(
     (
       sourceModels: ModelInfo[],
       sourceTaskConfig: ModelTaskConfig | null,
@@ -649,7 +649,7 @@ export function useModelConfig() {
       }
 
       // 级联删除涉及模型和任务引用，必须整份写入，避免产生不一致的中间状态。
-      const { models: nextModels, taskConfig: nextTaskConfig } = removeModelsForProviders(
+      const { models: nextModels, taskConfig: nextTaskConfig } = removeModelsAndTaskReferences(
         models,
         taskConfig,
         affectedModels
@@ -681,7 +681,7 @@ export function useModelConfig() {
       models,
       persistModelConfigDraft,
       prepareProviderSaveBarrier,
-      removeModelsForProviders,
+      removeModelsAndTaskReferences,
       syncProviderState,
       taskConfig,
     ]
@@ -859,12 +859,12 @@ export function useModelConfig() {
         const version = await createModelConfigVersion(label)
         await loadConfigVersions()
         toast({
-          title: '副本已创建',
+          title: '分工方案已创建',
           description: `已保存为「${version.label}」`,
         })
       } catch (error) {
         toast({
-          title: '创建副本失败',
+          title: '创建分工方案失败',
           description: (error as Error).message,
           variant: 'destructive',
         })
@@ -894,12 +894,12 @@ export function useModelConfig() {
         })
         await loadConfig()
         toast({
-          title: '副本已切换',
-          description: '当前模型配置已更新，切换前配置已归档为未启用副本',
+          title: '分工方案已切换',
+          description: '切换前的分工方案已自动保存',
         })
       } catch (error) {
         toast({
-          title: '切换副本失败',
+          title: '切换分工方案失败',
           description: (error as Error).message,
           variant: 'destructive',
         })
@@ -925,12 +925,11 @@ export function useModelConfig() {
         await deleteModelConfigVersion(versionId)
         await loadConfigVersions()
         toast({
-          title: '副本已删除',
-          description: '未启用的模型配置副本已删除',
+          title: '分工方案已删除',
         })
       } catch (error) {
         toast({
-          title: '删除副本失败',
+          title: '删除分工方案失败',
           description: (error as Error).message,
           variant: 'destructive',
         })
@@ -970,6 +969,9 @@ export function useModelConfig() {
           send_temperature: true,
           max_tokens: null,
           visual: false,
+          max_images: 0,
+          image_max_side: 8000,
+          image_min_side: 1,
           force_stream_mode: false,
           extra_params: {},
         }
@@ -1091,8 +1093,79 @@ export function useModelConfig() {
     ]
   )
 
+  const handleConfigureMaiReplier = useCallback(
+    async (modelIdentifier: 'mai_replier' | 'mai_replier_today'): Promise<boolean> => {
+      try {
+        setSaving(true)
+        const template = PROVIDER_TEMPLATES.find((item) => item.id === 'mai_replier')
+        const preset = template?.models?.find((model) => model.model_identifier === modelIdentifier)
+        if (!template || !preset || !template.defaultApiKey) {
+          throw new Error('麦麦特调回复模板不完整')
+        }
+        if (!taskConfig) throw new Error('任务配置尚未加载')
+
+        // 按服务地址识别已改名的提供商，保留用户的密钥和连接参数。
+        let provider = apiProviders.find((item) => findTemplateByBaseUrl(item.base_url)?.id === template.id)
+        const nextProviders = [...apiProviders]
+        if (!provider) {
+          let name = template.name
+          let suffix = 2
+          const usedNames = new Set(apiProviders.map((item) => item.name.trim().toLowerCase()))
+          while (usedNames.has(name.toLowerCase())) name = `${template.name} (${suffix++})`
+          provider = {
+            name,
+            base_url: template.base_url,
+            api_key: template.defaultApiKey,
+            client_type: template.client_type,
+            ...template.providerDefaults,
+          }
+          nextProviders.push(provider)
+        }
+
+        const providerName = provider.name
+        const nextModels = [...models]
+        let model = models.find((item) =>
+          item.api_provider === providerName && item.model_identifier === modelIdentifier
+        )
+        if (!model) {
+          let name = preset.name
+          let suffix = 2
+          const usedNames = new Set(models.map((item) => item.name.trim().toLowerCase()))
+          while (usedNames.has(name.toLowerCase())) name = `${preset.name} (${suffix++})`
+          model = { ...preset, name, api_provider: providerName }
+          nextModels.push(model)
+        }
+        const nextTaskConfig = {
+          ...taskConfig,
+          replyer: { ...taskConfig.replyer, model_list: [model.name] },
+        }
+        const result = await persistModelConfigDraft(nextModels, nextTaskConfig, nextProviders)
+        if (result.applyProviders) syncProviderState(nextProviders)
+        if (result.applyModels) {
+          setModels(nextModels)
+          setModelNames(nextModels.map((item) => item.name))
+        }
+        if (result.applyTaskConfig) setTaskConfig(nextTaskConfig)
+        if (result.applyModels && result.applyTaskConfig) {
+          checkTaskConfigIssues(nextTaskConfig, nextModels)
+        }
+        toast({
+          title: '麦麦特调回复已配置',
+          description: `已选择「${model.name}」用于回复，配置已保存`,
+        })
+        return true
+      } catch (error) {
+        toast({ title: '配置失败', description: (error as Error).message, variant: 'destructive' })
+        return false
+      } finally {
+        setSaving(false)
+      }
+    },
+    [apiProviders, checkTaskConfigIssues, models, persistModelConfigDraft, syncProviderState, taskConfig, toast]
+  )
+
   // 保存模型编辑
-  const handleSaveEdit = useCallback(async () => {
+  const handleSaveEdit = useCallback(async (newProvider?: APIProvider | null) => {
     if (!editingModel) return
 
     // 验证必填项
@@ -1117,6 +1190,10 @@ export function useModelConfig() {
     }
     if (!editingModel.model_identifier?.trim()) {
       errors.model_identifier = '请输入模型标识符'
+    }
+    if (newProvider && !newProvider.api_key.trim()) errors.api_provider = '请输入 API Key'
+    if (newProvider && apiProviders.some((p) => p.name.toLowerCase() === newProvider.name.toLowerCase())) {
+      errors.api_provider = '厂商名称已存在，请重新选择提供商'
     }
     const pricePeriodsError = validatePricePeriods(editingModel.price_periods)
     if (pricePeriodsError) errors.price_periods = pricePeriodsError
@@ -1160,7 +1237,9 @@ export function useModelConfig() {
     try {
       setSaving(true)
       // 模型名称与任务引用必须在同一次写入中保存，避免热重载读到不一致的中间状态。
-      const persistResult = await persistModelConfigDraft(newModels, newTaskConfig, apiProviders)
+      const nextProviders = newProvider ? [...apiProviders, cleanProviderData(newProvider)] : apiProviders
+      const persistResult = await persistModelConfigDraft(newModels, newTaskConfig, nextProviders)
+      if (newProvider && persistResult.applyProviders) syncProviderState(nextProviders)
       if (persistResult.applyModels) {
         setModels(newModels)
         setModelNames(newModels.map((model) => model.name))
@@ -1195,6 +1274,7 @@ export function useModelConfig() {
     editingModel,
     models,
     persistModelConfigDraft,
+    syncProviderState,
     taskConfig,
     toast,
   ])
@@ -1225,11 +1305,16 @@ export function useModelConfig() {
   // 确认删除模型
   const handleConfirmDelete = useCallback(() => {
     if (deletingIndex !== null) {
-      const newModels = models.filter((_, i) => i !== deletingIndex)
+      const { models: newModels, taskConfig: nextTaskConfig } = removeModelsAndTaskReferences(
+        models,
+        taskConfig,
+        models.filter((_, i) => i === deletingIndex)
+      )
       setModels(newModels)
       setModelNames(newModels.map((m) => m.name))
+      setTaskConfig(nextTaskConfig)
       // 重新检查任务配置问题
-      checkTaskConfigIssues(taskConfig, newModels)
+      checkTaskConfigIssues(nextTaskConfig, newModels)
       toast({
         title: '删除成功',
         description: '配置将在 2 秒后自动保存',
@@ -1237,7 +1322,7 @@ export function useModelConfig() {
     }
     setDeleteDialogOpen(false)
     setDeletingIndex(null)
-  }, [checkTaskConfigIssues, deletingIndex, models, taskConfig, toast])
+  }, [checkTaskConfigIssues, deletingIndex, models, removeModelsAndTaskReferences, taskConfig, toast])
 
   const openProviderDeleteDialog = useCallback((index: number) => {
     setDeletingProviderIndex(index)
@@ -1466,18 +1551,23 @@ export function useModelConfig() {
   // 确认批量删除
   const handleConfirmBatchDelete = useCallback(() => {
     const deletedCount = selectedModels.size
-    const newModels = models.filter((_, index) => !selectedModels.has(index))
+    const { models: newModels, taskConfig: nextTaskConfig } = removeModelsAndTaskReferences(
+      models,
+      taskConfig,
+      models.filter((_, index) => selectedModels.has(index))
+    )
     setModels(newModels)
     setModelNames(newModels.map((m) => m.name))
+    setTaskConfig(nextTaskConfig)
     // 重新检查任务配置问题
-    checkTaskConfigIssues(taskConfig, newModels)
+    checkTaskConfigIssues(nextTaskConfig, newModels)
     setSelectedModels(new Set())
     setBatchDeleteDialogOpen(false)
     toast({
       title: '批量删除成功',
       description: `已删除 ${deletedCount} 个模型，配置将在 2 秒后自动保存`,
     })
-  }, [checkTaskConfigIssues, models, selectedModels, taskConfig, toast])
+  }, [checkTaskConfigIssues, models, removeModelsAndTaskReferences, selectedModels, taskConfig, toast])
 
   // ---- 任务配置更新（与 embedding 警告协调）----
   const updateTaskConfig = useCallback(
@@ -1601,6 +1691,7 @@ export function useModelConfig() {
     editingProviderIndex,
     openProviderDialog,
     handleSaveProviderEdit,
+    handleConfigureMaiReplier,
     providerDeleteDialogOpen,
     setProviderDeleteDialogOpen,
     deletingProviderIndex,

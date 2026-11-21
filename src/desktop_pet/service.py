@@ -16,18 +16,19 @@ from src.common.paths import get_instance_root
 from src.common.runtime_loop import run_on_main_loop
 from src.config.config import config_manager, global_config
 from src.core.internal_chat import INTERNAL_CHAT_PLATFORM, INTERNAL_CHAT_USER_ID
+from src.services.schedules.service import schedule_service
 
 from .app_conditions import matching_application, running_applications
 from .rendering import render_parts
 from .remote_protocol import RemotePeer, decode_screenshot
 from .screen import DesktopScreenshot, ScreenTimeline, capture_desktop, compose_screen_timeline
 from .thinking_caption import ThinkingCaption, caption_enabled
-from .todo_dispatch import execute_todo
-from .todos import TodoStore
 
 logger = get_logger("desktop_pet")
 COMMAND_TIMEOUT = 3
 STOP_TIMEOUT = 5
+MAX_UNANSWERED_PROACTIVE_WAKES = 2
+PROACTIVE_WAKE_SILENCE_SECONDS = 20 * 60
 
 
 class DesktopPetService:
@@ -35,9 +36,7 @@ class DesktopPetService:
         self._worker: Optional[asyncio.Task[None]] = None
         self._process: Optional[asyncio.subprocess.Process] = None
         self._remote: Optional[RemotePeer] = None
-        self._remote_todos: Optional[TodoStore] = None
         self._todo_task: Optional[asyncio.Task[None]] = None
-        self._todo_operations: Set[asyncio.Task[Dict[str, Any]]] = set()
         self._active_mode: Optional[str] = None
         self._ready = False
         self._visible = False
@@ -53,6 +52,8 @@ class DesktopPetService:
         self._button_sync_task: Optional[asyncio.Task[None]] = None
         self._button_revision = 0
         self._proactive_wake_task: Optional[asyncio.Task[None]] = None
+        self._unanswered_proactive_wakes = 0
+        self._last_owner_chat_activity = time.monotonic()
         self._screen_reader_task: Optional[asyncio.Task[None]] = None
         self._screen_busy = False
         self._screen_error = ""
@@ -101,10 +102,16 @@ class DesktopPetService:
     async def reload(self) -> None:
         await run_on_main_loop(self._reload())
 
-    async def _reload(self) -> None:
+    async def restart(self) -> None:
+        """停止并重新启动本机桌宠进程，使用当前配置。"""
+        await run_on_main_loop(self._reload(force_restart=True))
+
+    async def _reload(self, *, force_restart: bool = False) -> None:
         async with self._lifecycle_lock:
             mode = global_config.desktop_pet.mode
-            if (global_config.desktop_pet.enabled and not self._closing and self._active_mode == mode
+            if force_restart and (not global_config.desktop_pet.enabled or mode != "local"):
+                raise RuntimeError("请先启用本机桌宠，再重载桌宠")
+            if (not force_restart and global_config.desktop_pet.enabled and not self._closing and self._active_mode == mode
                     and (self._ready or mode == "remote")):
                 if not caption_enabled():
                     self._thinking_caption.update({"session_id": ""})
@@ -122,12 +129,6 @@ class DesktopPetService:
                 return
             self._active_mode = mode
             if mode == "remote":
-                def open_todos() -> TodoStore:
-                    folder = get_instance_root() / "data" / "plugins" / "sengokucola.desktop-pet"
-                    folder.mkdir(parents=True, exist_ok=True)
-                    return TodoStore(folder / "todos.json")
-
-                self._remote_todos = await asyncio.to_thread(open_todos)
                 self._closing = False
                 self._todo_task = asyncio.create_task(self._run_remote_todos(), name="remote-desktop-pet-todos")
                 self._restart_proactive_wake()
@@ -159,9 +160,6 @@ class DesktopPetService:
         if peer is not None:
             await self._detach_remote(peer)
             await peer.close("桌宠已关闭或运行模式已切换")
-        # to_thread 的文件提交不能被取消；切换到本机窗口前等待唯一写入者完成。
-        await asyncio.gather(*self._todo_operations, return_exceptions=True)
-        self._remote_todos = None
         self._active_mode = None
         for task in self._notifications:
             task.cancel()
@@ -238,8 +236,8 @@ class DesktopPetService:
         from src.webui.routers.chat.service import relay_plugin_chat_message
 
         self._require_remote(peer)
-        await relay_plugin_chat_message("builtin.desktop_pet", payload["text"], images=payload["images"])
-        return {"accepted": True, "request_id": request_id}
+        message_id = await relay_plugin_chat_message("builtin.desktop_pet", payload["text"], images=payload["images"])
+        return {"accepted": True, "request_id": request_id, "message_id": message_id}
 
     async def remote_todo(self, peer: RemotePeer, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         self._require_remote(peer)
@@ -248,23 +246,19 @@ class DesktopPetService:
         return await self._todo_command({**payload, "type": "todo", "action": action})
 
     async def _todo_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
-        store = self._remote_todos
-        if store is None:
-            raise RuntimeError("远端待办存储尚未启动")
-        operation = asyncio.create_task(asyncio.to_thread(execute_todo, store, command))
-        self._todo_operations.add(operation)
+        return await schedule_service.command(command)
 
-        def finished(task: asyncio.Task[Dict[str, Any]]) -> None:
-            self._todo_operations.discard(task)
-            if not task.cancelled():
-                task.exception()  # HTTP 断开后仍消费后台提交的异常。
-
-        operation.add_done_callback(finished)
-        result = await asyncio.shield(operation)
-        if self._ready and command["action"] not in {"list", "image", "claim_due"}:
-            # 持久化成功即返回；窗口刷新失败不能把已完成的写入误报为失败。
-            self._observe(self._command({"type": "todo_refresh"}))
-        return result
+    async def _local_todo(self, event: Dict[str, Any]) -> None:
+        """窗口只发管理请求，所有持久化由主程序执行。"""
+        action = event["command"]["action"]
+        if action not in {"list", "image", "add", "update", "complete", "delete"}:
+            raise ValueError("不允许窗口调用此事项操作")
+        response: Dict[str, Any] = {"type": "todo_response", "request_id": event["request_id"]}
+        try:
+            response["result"] = await self._todo_command(event["command"])
+        except (OSError, ValueError, RuntimeError) as exc:
+            response["error"] = str(exc)
+        await self._command(response)
 
     def _backend_active(self) -> bool:
         return not self._closing and (self._ready or self._active_mode == "remote")
@@ -331,12 +325,16 @@ class DesktopPetService:
     def _handle_event(self, event: Dict[str, Any]) -> None:
         kind = event["type"]
         if kind == "ready":
-            self._ready = self._visible = True
-            logger.info("内置桌宠已出现在桌面上")
+            already_ready = self._ready and self._remote is None
+            self._ready = True
+            if not already_ready:
+                self._visible = True
+                logger.info("内置桌宠已出现在桌面上")
             self._observe(self.apply_skin(global_config.desktop_pet.skin_id))
-            self._observe(self._dispatch_hook("ready"))
+            if not already_ready:
+                self._observe(self._dispatch_hook("ready"))
             self._buttons_changed()
-            if self._remote is None:
+            if self._remote is None and not already_ready:
                 self._observe(self._run_todos())
             self._restart_proactive_wake()
             self._observe(self._publish_screen_state())
@@ -355,6 +353,10 @@ class DesktopPetService:
             self._observe(self._dispatch_hook(kind, gesture_id=event["gesture_id"]))
         elif kind == "screen_action":
             self._observe(self._screen_action(event["action"]))
+        elif kind == "todo_request":
+            self._observe(self._local_todo(event))
+        elif kind == "history":
+            self._observe(self._publish_history(event))
         elif kind == "chat":
             self._observe(self._chat(event["request_id"]))
         elif kind == "exploration_tasks":
@@ -373,6 +375,40 @@ class DesktopPetService:
 
     def _screen_reading(self) -> bool:
         return self._screen_reader_task is not None and not self._screen_reader_task.done()
+
+    async def _publish_history(self, event: Dict[str, Any]) -> None:
+        from src.chat.message_receive.chat_manager import chat_manager
+        from src.maisaka.monitor.event_store import load_session_event_page
+
+        from .rendering import render_history_events
+
+        response = {"type": "history", "request_id": event["request_id"]}
+        try:
+            session_ids = await asyncio.to_thread(
+                chat_manager.resolve_session_ids_by_target,
+                platform=INTERNAL_CHAT_PLATFORM, target_id=INTERNAL_CHAT_USER_ID, chat_type="private",
+            )
+            cursors = event["cursors"]
+            next_cursors = {}
+            events = []
+            for session_id in session_ids:
+                if cursors and session_id not in cursors:
+                    continue
+                before_event_id = cursors.get(session_id, 0)
+                if type(before_event_id) is not int or before_event_id < 0:
+                    raise ValueError("历史记录游标无效")
+                page = await asyncio.to_thread(load_session_event_page, session_id=session_id,
+                                               before_event_id=before_event_id)
+                events.extend(page.events)
+                if page.has_more:
+                    next_cursors[session_id] = page.oldest_event_id
+            events.sort(key=lambda item: item["data"]["event_id"])
+            response.update(items=await asyncio.to_thread(render_history_events, events),
+                            cursors=next_cursors, has_more=bool(next_cursors))
+        except Exception as exc:
+            logger.exception("桌宠历史记录读取失败")
+            response["error"] = str(exc)
+        await self._command(response)
 
     def _require_screen_access(self) -> None:
         if not global_config.desktop_pet.screen_read_enabled:
@@ -582,6 +618,9 @@ class DesktopPetService:
         await self._command({"type": "exploration_result", "error": error, "task_id": task["id"] if task else ""})
 
     async def _wake_proactively(self) -> None:
+        if not self._can_wake_proactively():
+            return
+
         from src.prompt.prompt_manager import prompt_manager
 
         template = await asyncio.to_thread(prompt_manager.get_prompt, "desktop_pet_proactive_wake")
@@ -590,36 +629,28 @@ class DesktopPetService:
             source_kind="desktop_pet_proactive_wake", text=text, reason="桌宠定期主动思考",
         )
 
+    def _can_wake_proactively(self) -> bool:
+        return (
+            self._unanswered_proactive_wakes < MAX_UNANSWERED_PROACTIVE_WAKES
+            and time.monotonic() - self._last_owner_chat_activity > PROACTIVE_WAKE_SILENCE_SECONDS
+        )
+
+    def notify_user_message(self, platform: str, user_id: str, *, is_group: bool) -> None:
+        """主人在桌宠或网页聊天中回复后，重新允许最多两次主动唤醒。"""
+        if platform == INTERNAL_CHAT_PLATFORM and user_id == INTERNAL_CHAT_USER_ID and not is_group:
+            self._unanswered_proactive_wakes = 0
+            self._last_owner_chat_activity = time.monotonic()
+
     async def _run_todos(self) -> None:
-        next_app_check = 0.0
+        # 定时日程由主程序独立调度；仅桌面应用条件需要设备在线。
         while self._backend_active():
-            # 离线时仍调度 Bot 自身任务，用户提醒保留 pending，设备重连后再领取。
-            claim: Dict[str, Any] = {"type": "todo", "action": "claim_due"}
-            if self._active_mode == "remote" and not self._ready:
-                claim["kind"] = "bot"
-            result = await self._command(claim)
-            for item in result["items"]:
-                # 编辑、删除已领取但尚未投递的事项时，不再执行旧版本。
-                current = await self._command({"type": "todo", "action": "list"})
-                if not any(entry["id"] == item["id"] and entry["revision"] == item["revision"]
-                           for entry in current["items"]):
-                    continue
-                error = ""
-                try:
-                    await self._activate_todo(item)
-                except Exception as exc:
-                    error = str(exc)
-                    logger.exception("桌宠定时事项 %s 触发失败", item["id"])
-                await self._command({"type": "todo", "action": "finish", "todo_id": item["id"],
-                                     "revision": item["revision"], "error": error})
-            if self._ready and not self._closing and time.monotonic() >= next_app_check:
+            if self._ready and not self._closing:
                 try:
                     await self._check_app_todos()
                 except Exception as exc:
                     self._error = str(exc)
                     logger.exception("桌宠应用条件检测失败")
-                next_app_check = time.monotonic() + 5
-            await asyncio.sleep(1)
+            await asyncio.sleep(5)
 
     async def _run_remote_todos(self) -> None:
         try:
@@ -647,8 +678,14 @@ class DesktopPetService:
 
     async def trigger_condition_todo(
         self, todo_id: str, revision: str, evidence: str, *, applications: Optional[List[Dict[str, str]]] = None,
+        session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        snapshot = await self._command({"type": "todo", "action": "list"})
+        async def command(payload: Dict[str, Any]) -> Dict[str, Any]:
+            if session_id is not None:
+                return await schedule_service.command(payload, session_id=session_id)
+            return await self._command(payload)
+
+        snapshot = await command({"type": "todo", "action": "list"})
         original = next((item for item in snapshot["items"] if item["id"] == todo_id), None)
         if original is None or original["revision"] != revision:
             raise ValueError("待办已修改或删除，请重新查询")
@@ -658,30 +695,23 @@ class DesktopPetService:
             evidence = matching_application(original["condition"], applications)
             if not evidence:
                 raise ValueError("未检测到匹配的应用，不能触发")
-        result = await self._command({"type": "todo", "action": "claim_condition", "todo_id": todo_id,
+        result = await command({"type": "todo", "action": "claim_condition", "todo_id": todo_id,
                                       "revision": revision, "evidence": evidence})
         item = result["item"]
-        current = await self._command({"type": "todo", "action": "list"})
+        current = await command({"type": "todo", "action": "list"})
         if not any(entry["id"] == todo_id and entry["revision"] == revision for entry in current["items"]):
             raise ValueError("待办已修改或删除，本次触发取消")
         try:
             await self._activate_todo(item)
         except Exception as exc:
-            await self._command({"type": "todo", "action": "finish", "todo_id": todo_id,
+            await command({"type": "todo", "action": "finish", "todo_id": todo_id,
                                  "revision": revision, "error": str(exc)})
             raise
-        await self._command({"type": "todo", "action": "finish", "todo_id": todo_id, "revision": revision})
+        await command({"type": "todo", "action": "finish", "todo_id": todo_id, "revision": revision})
         return {"id": todo_id, "status": "triggered", "evidence": item["evidence"]}
 
     async def _activate_todo(self, item: Dict[str, Any]) -> None:
-        if item["kind"] == "user":
-            await self.control("show")
-            await self._command({"type": "reply", "parts": [{"kind": "text", "text": "⏰ 提醒：" + item["text"]}]})
-            return
-        await self._enqueue_owner_task(source_kind="desktop_pet_todo",
-            text=f"[Bot 待办已触发，事项 ID: {item['id']}，这是内部任务]\n{item['text']}\n"
-                 "请执行此待办；完成后使用 desktop_pet_todo 的 complete 操作归档事项。触发不代表任务已完成。",
-            reason="桌宠待办触发")
+        await schedule_service.dispatch(item)
 
     async def _running_applications(self) -> List[Dict[str, str]]:
         if self._active_mode != "remote":
@@ -711,7 +741,11 @@ class DesktopPetService:
         if not await heartflow_manager._is_session_allowed(session):
             raise PermissionError("当前策略禁止唤醒主人聊天流")
         runtime = await heartflow_manager.get_or_create_heartflow_chat(session.session_id)
+        if source_kind == "desktop_pet_proactive_wake" and not self._can_wake_proactively():
+            return
         runtime.enqueue_internal_task(source_kind=source_kind, text=text, reason=reason, images=images if images is not None else [])
+        if source_kind == "desktop_pet_proactive_wake":
+            self._unanswered_proactive_wakes += 1
 
     async def _dispatch_hook(self, name: str, **kwargs: Any) -> None:
         from src.plugin_runtime.integration import get_plugin_runtime_manager
@@ -794,20 +828,23 @@ class DesktopPetService:
             request = await asyncio.to_thread(
                 read_request, get_instance_root() / "temp" / "desktop_pet" / "requests", request_id,
             )
-            await relay_plugin_chat_message("builtin.desktop_pet", request["text"], images=request["images"])
+            message_id = await relay_plugin_chat_message("builtin.desktop_pet", request["text"], images=request["images"])
         except Exception as exc:
             # 单条消息投递失败只影响这一句，桌宠窗口继续运行。
             await self._command({"type": "failed", "request_id": request_id, "error": str(exc)})
             raise
         else:
-            await self._command({"type": "accepted", "request_id": request_id})
+            await self._command({"type": "accepted", "request_id": request_id, "message_id": message_id})
 
     async def _command(self, command: Dict[str, Any]) -> Any:
-        if command["type"] == "todo" and self._active_mode == "remote" and not self._closing:
+        if command["type"] == "todo":
             return await self._todo_command(command)
         process = self._process
         peer = self._remote
-        if not self._ready or self._closing or (peer is None and (process is None or process.stdin is None)):
+        # 事项回执只依赖已建立的本机管道，也允许在页面初始化期间返回。
+        startup_todo_response = command["type"] == "todo_response" and peer is None
+        if ((not self._ready and not startup_todo_response) or self._closing
+                or (peer is None and (process is None or process.stdin is None))):
             raise RuntimeError("桌宠窗口尚未就绪，请检查 desktop_pet.enabled 和 desktop_pet.status")
         command_id = uuid.uuid4().hex
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
@@ -889,14 +926,17 @@ class DesktopPetService:
                 self._observe(self._command({"type": "thinking"}))
 
     async def notify_reply(self, message: Dict[str, Any]) -> None:
-        if not self._ready or self._closing or message["platform"] != INTERNAL_CHAT_PLATFORM:
+        if message["platform"] != INTERNAL_CHAT_PLATFORM:
             return
         info = message["message_info"]
         if info.get("group_info") or info.get("additional_config", {}).get("platform_io_target_user_id") != INTERNAL_CHAT_USER_ID:
             return
-        self._observe(self._render_reply(message["raw_message"]))
+        self._last_owner_chat_activity = time.monotonic()
+        if not self._ready or self._closing:
+            return
+        self._observe(self._render_reply(message["raw_message"], message["message_id"]))
 
-    async def _render_reply(self, segments: List[Dict[str, Any]]) -> None:
+    async def _render_reply(self, segments: List[Dict[str, Any]], message_id: str) -> None:
         skipped: List[str] = []
         parts = await asyncio.to_thread(render_parts, segments, skipped)
         if skipped:
@@ -905,7 +945,8 @@ class DesktopPetService:
             # 主人会话的实际发言主动显示窗口；插件 notice 仍保持原有隐藏语义。
             if not self._visible:
                 await self.control("show")
-            await self._command({"type": "reply", "parts": parts})
+            await self._command({"type": "reply", "parts": parts, "message_id": message_id,
+                                 "sound": global_config.desktop_pet.message_sound})
             self._thinking = False
             text = "".join(part.get("text", "") for part in parts if part.get("kind") == "text")
             self._bubble = _bubble_text(text) or "[图片]"

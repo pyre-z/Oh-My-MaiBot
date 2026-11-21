@@ -38,6 +38,10 @@ _POLL_INTERVAL = 0.25
 logger = logging.getLogger(__name__)
 
 
+class BotShutdownError(RuntimeError):
+    """有 Bot 未能正常停止，详细原因已写入宿主日志。"""
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -397,7 +401,18 @@ class BotSupervisor:
         """按登记顺序逐个启动：前一个就绪或失败后再启动下一个，避免多个大数据迁移同时争抢磁盘。"""
         if self._start_blocker():
             return []
+        bots = await asyncio.to_thread(self.workspace.registry.list_bots)
+        if not any(bot.desired_state == "running" and bot.initialization == "initialized" for bot in bots):
+            print("没有待自动启动的 Bot，宿主正在等待启动操作。请在 WebUI 机器人管理页启动 Bot。", flush=True)
+            for bot in bots:
+                print(
+                    f"  {bot.name}: 期望状态={bot.desired_state}，初始化状态={bot.initialization}；"
+                    f"启动命令：uv run maibot host start --bot-id {bot.bot_id}",
+                    flush=True,
+                )
+            return []
         if self.prepare_dependencies is not None:
+            print("正在检查并准备插件依赖，完成后启动 Bot…", flush=True)
             try:
                 await self.prepare_dependencies()
             except Exception as exc:
@@ -458,10 +473,11 @@ class BotSupervisor:
         """停止全部 Bot 但不改变期望状态，下次启动宿主时恢复。"""
         self._closing = True
 
-        async def stop_runtime(runtime: _Runtime) -> None:
+        async def stop_runtime(runtime: _Runtime) -> Optional[str]:
             async with runtime.lock:
                 if not await self._stop_locked(runtime):
-                    raise RuntimeError(f"{runtime.bot.name}: {runtime.error}")
+                    return runtime.bot.name
+                return None
 
         results = await asyncio.gather(*(stop_runtime(item) for item in self._runtimes.values()), return_exceptions=True)
         watchers = [item.watcher for item in self._runtimes.values() if item.watcher is not None]
@@ -469,6 +485,12 @@ class BotSupervisor:
             # 维护后的恢复在关闭标记下会停止启动新的 Bot。
             watchers.append(self._resume_task)
         await asyncio.gather(*watchers, return_exceptions=True)
-        failures = [str(result) for result in results if isinstance(result, BaseException)]
+        failures = [result for result in results if isinstance(result, BaseException)]
+        failed_bots = [result for result in results if isinstance(result, str)]
+        if failed_bots:
+            error = BotShutdownError(f"以下 Bot 未能正常停止：{'、'.join(failed_bots)}（详见上方日志）")
+            if not failures:
+                raise error
+            failures.append(error)
         if failures:
-            raise RuntimeError("宿主关闭未完成: " + "; ".join(failures))
+            raise BaseExceptionGroup("停止 Bot 时发生异常", failures)

@@ -551,6 +551,7 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
       <div className="min-w-0 space-y-2">
         <div className="flex min-w-0 items-center gap-3">
           <Slider
+            disabled={schema.readOnly}
             value={[numValue]}
             onValueChange={(values) => onChange(values[0])}
             min={min}
@@ -560,6 +561,7 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
             variant="value"
           />
           <Input
+            disabled={schema.readOnly}
             aria-label={`${fieldLabel} 数值`}
             type="number"
             value={sliderDraftValue}
@@ -584,17 +586,19 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
   const renderNumberInput = () => {
     const min = schema.minValue
     const max = schema.maxValue
-    const step = schema.step ?? (schema.type === 'integer' ? 1 : 0.1)
+    const step = schema.step ?? (schema.type === 'integer' ? 1 : 'any')
 
     return (
       <DraftNumberInput
         className={inlineRightInputClassName}
+        disabled={schema.readOnly}
         value={value}
         defaultValue={schema.default}
         integer={schema.type === 'integer'}
         onValueChange={(nextValue) => onChange(nextValue)}
         min={min}
         max={max}
+        range={min !== undefined && max !== undefined ? [min, max] : undefined}
         step={step}
         style={inlineRightInputStyle}
       />

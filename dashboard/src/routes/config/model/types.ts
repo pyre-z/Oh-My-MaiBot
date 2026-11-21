@@ -15,7 +15,7 @@ export interface ModelPricePeriod {
  * 模型信息
  */
 export interface ModelInfo {
-  model_type: 'llm' | 'embedding' | 'image_embedding' // 旧配置由升级钩子标注
+  model_type: 'llm' | 'embedding' | 'image_embedding' | 'asr' | 'tts' // 旧配置由升级钩子标注
   model_identifier: string
   name: string
   api_provider: string
@@ -28,6 +28,9 @@ export interface ModelInfo {
   send_temperature?: boolean // 是否发送由 MaiBot 管理的 temperature 参数
   max_tokens?: number | null // 模型级别最大token数，覆盖任务配置中的max_tokens
   visual?: boolean
+  max_images?: number
+  image_max_side?: number
+  image_min_side?: number
   force_stream_mode?: boolean
   extra_params?: Record<string, unknown>
 }

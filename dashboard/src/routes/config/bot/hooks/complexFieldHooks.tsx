@@ -2106,7 +2106,7 @@ function TalkValueGroupedRuleEditor({
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label className="text-xs font-medium">发言频率</Label>
+                    <Label className="text-xs font-medium">查看频率</Label>
                     <div className="flex items-center gap-2">
                       <Slider
                         value={[item.value]}
@@ -2231,7 +2231,7 @@ function TalkValueRuleEditor({
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>添加发言频率规则</DialogTitle>
+            <DialogTitle>添加查看频率规则</DialogTitle>
             <DialogDescription>至少指定平台或群聊 ID。留空表示默认范围，* 表示通配。</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -2270,18 +2270,6 @@ function TalkValueRuleEditor({
       )}
     </div>
   )
-}
-
-const truncate = (text: string, max = 32) => {
-  if (text.length <= max) return text
-  return `${text.slice(0, max)}…`
-}
-
-const collectStringList = (value: unknown): string[] => {
-  if (!Array.isArray(value)) return []
-  return value
-    .map((item) => (typeof item === 'string' ? item.trim() : ''))
-    .filter((item) => item.length > 0)
 }
 
 const normalizeExpressionRuleType = (value: unknown): ExpressionRuleType => {
@@ -2542,10 +2530,10 @@ export const MultipleReplyStyleHook = createStringListHook({
 })
 
 const GroupTalkValueRulesHook = createListItemEditorHook({
-  addLabel: '添加发言频率规则',
+  addLabel: '添加查看频率规则',
   addButtonPlacement: 'none',
-  helperText: '仅对群聊生效，须指定平台或群聊 ID。时间留空表示该范围内兜底，* 表示强制全天。没有规则命中时使用总体发言频率。',
-  emptyText: '尚未配置任何规则，将使用总体发言频率。',
+  helperText: '仅对群聊生效，须指定平台或群聊 ID。时间留空表示该范围内兜底，* 表示强制全天。没有规则命中时使用总体查看频率。',
+  emptyText: '尚未配置任何规则，将使用总体查看频率。',
   collapseButtonDisplay: 'icon',
   fieldRows: [
     ['platform', 'item_id', 'rule_type'],
@@ -2596,7 +2584,7 @@ export const ChatTalkRuleGroupsHook: FieldHookComponent = (props) => {
   const activeName = config?.active_group ?? defaultName
   const groups = config?.groups ?? [{ name: defaultName, rules: [] }]
   const activeGroup = groups.find((group) => group.name === activeName)
-  if (!activeGroup) return <p role="alert" className="text-sm text-destructive">找不到启用的发言频率规则组。</p>
+  if (!activeGroup) return <p role="alert" className="text-sm text-destructive">找不到启用的查看频率规则组。</p>
 
   const rules = activeGroup.rules ?? []
   const privateRules = rules.filter((rule) => rule.rule_type === 'private')
@@ -3103,50 +3091,6 @@ export const BotPlatformAccountsHook: FieldHookComponent = ({
     </div>
   )
 }
-
-export const KeywordRulesHook = createListItemEditorHook({
-  addLabel: '添加关键词规则',
-  helperText: '匹配命中后会把反应提示作为额外上下文。关键词至少填写一条。',
-  emptyText: '尚未添加任何关键词规则。',
-  visibleFields: ['keywords', 'reaction'],
-  normalizeItems: (items) =>
-    items.map((item) => ({
-      ...item,
-      regex: [],
-    })),
-  itemTitle: (item) => {
-    const keywords = collectStringList(item.keywords)
-    const reaction =
-      typeof item.reaction === 'string' ? item.reaction.trim() : ''
-    const left = keywords.length
-      ? `关键词 ${keywords.length} 条`
-      : '未配置关键词'
-    const right = reaction ? `→ ${truncate(reaction)}` : '→ 未填写反应'
-    return `${left} ${right}`
-  },
-})
-
-export const RegexRulesHook = createListItemEditorHook({
-  addLabel: '添加正则规则',
-  helperText: '正则模式按 Python 语法编写，命中时把反应提示作为额外上下文。',
-  emptyText: '尚未添加任何正则规则。',
-  visibleFields: ['regex', 'reaction'],
-  normalizeItems: (items) =>
-    items.map((item) => ({
-      ...item,
-      keywords: [],
-    })),
-  itemTitle: (item) => {
-    const regex = collectStringList(item.regex)
-    const reaction =
-      typeof item.reaction === 'string' ? item.reaction.trim() : ''
-    const left = regex.length
-      ? `正则 ${regex.length} 条`
-      : '未配置正则'
-    const right = reaction ? `→ ${truncate(reaction)}` : '→ 未填写反应'
-    return `${left} ${right}`
-  },
-})
 
 export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, onParentChange, parentValues, schema, value }) => {
   const groups = normalizeExpressionGroups(value)

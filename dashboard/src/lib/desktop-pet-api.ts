@@ -1,3 +1,5 @@
+import { queryOptions } from '@tanstack/react-query'
+
 import { backendApi } from '@/lib/http'
 
 const root = '/api/webui/desktop-pet'
@@ -28,8 +30,20 @@ export function getDesktopPetStatus(signal?: AbortSignal) {
   return backendApi.get<DesktopPetStatus>(`${root}/status`, { signal })
 }
 
+export const desktopPetStatusQueryOptions = queryOptions({
+  queryKey: ['desktop-pet-status'],
+  queryFn: ({ signal }) => getDesktopPetStatus(signal),
+  // 开启时及时更新状态，关闭时降低轮询频率。
+  refetchInterval: (query) => query.state.data?.enabled ? 3_000 : 30_000,
+  retry: false,
+})
+
 export function setDesktopPetVisible(visible: boolean) {
   return backendApi.post<DesktopPetStatus>(`${root}/visibility`, { body: { visible } })
+}
+
+export function restartDesktopPet() {
+  return backendApi.post<{ reloaded: boolean }>(`${root}/restart`)
 }
 
 export function sendDesktopPetMessage(text: string) {

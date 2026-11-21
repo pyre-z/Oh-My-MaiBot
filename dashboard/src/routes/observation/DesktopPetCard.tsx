@@ -5,7 +5,7 @@
  * 输入的话投递到主人聊天（和桌宠窗口里说话同一个会话），待办键列出未完成的待办。
  */
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, ListTodo, Loader2, Send } from 'lucide-react'
+import { ArrowRight, ListTodo, Loader2, RotateCw, Send } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -17,12 +17,12 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { StatusLight, type LightStatus } from '@/components/ui/status-light'
 import {
   desktopPetCardState,
+  restartDesktopPet,
   sendDesktopPetMessage,
   setDesktopPetVisible,
   type DesktopPetCardState,
   type DesktopPetStatus,
 } from '@/lib/desktop-pet-api'
-import { buildSearchNavigationPath } from '@/lib/config-search-navigation'
 import '@/styles/desktop-pet-card.css'
 
 const MESSAGE_MAX_LENGTH = 2000
@@ -36,12 +36,11 @@ const LIGHTS: Record<DesktopPetCardState, LightStatus> = {
   error: 'error',
 }
 
-/** 卡片标题栏右侧：跳到 Bot 配置里的桌宠设置 */
+/** 卡片标题栏右侧：定位到独立页面内的桌宠设置。 */
 export function DesktopPetCardActions() {
   const { t } = useTranslation()
-  const url = new URL(buildSearchNavigationPath('/config/bot', 'desktop_pet.enabled'), window.location.origin)
   return (
-    <Link to={url.pathname} search={Object.fromEntries(url.searchParams)} data-board-link="true">
+    <Link to="/desktop-pet" hash="desktop-pet-settings" data-board-link="true">
       {t('observation.pet.settings')} <ArrowRight aria-hidden="true" />
     </Link>
   )
@@ -60,6 +59,7 @@ export function DesktopPetCardBody({
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [showing, setShowing] = useState(false)
+  const [reloading, setReloading] = useState(false)
   const [actionError, setActionError] = useState('')
   const composerEnabled = state === 'idle' || state === 'thinking' || state === 'hidden'
   const showFigure = composerEnabled
@@ -92,6 +92,19 @@ export function DesktopPetCardBody({
       setActionError(error instanceof Error ? error.message : t('observation.pet.showFailed'))
     } finally {
       setShowing(false)
+    }
+  }
+
+  const reload = async () => {
+    setReloading(true)
+    setActionError('')
+    try {
+      await restartDesktopPet()
+      onChanged()
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : t('observation.pet.reloadFailed'))
+    } finally {
+      setReloading(false)
     }
   }
 
@@ -152,6 +165,13 @@ export function DesktopPetCardBody({
             {meta || t(`observation.pet.mode.${status.mode}`)}
           </span>
           <span className="flex-1" />
+          {status.mode === 'local' && (
+            <Button type="button" variant="outline" size="xs" title={t('observation.pet.reloadHint')}
+              disabled={(status.running && !status.ready) || reloading} onClick={() => void reload()}>
+              <RotateCw className={reloading ? 'animate-spin' : undefined} />
+              {t('observation.pet.reload')}
+            </Button>
+          )}
           {state === 'hidden' && (
             <Button type="button" variant="outline" size="xs" aria-pressed={!showing} disabled={showing} onClick={() => void show()}>
               {showing && <Loader2 className="animate-spin" />}

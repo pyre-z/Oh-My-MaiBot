@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from src.maisaka.runtime import MaisakaHeartFlowChatting
 
 logger = get_logger("maisaka_turn_scheduler")
+MAX_INTERNAL_ROUNDS = 16
 
 
 class MessageTurnScheduler(ABC):
@@ -24,6 +25,35 @@ class MessageTurnScheduler(ABC):
         self._runtime = runtime
         self.accepted_wait_started_at = None
 
+    def observe_message(self) -> None:
+        """新消息登记后更新场景定时判定。"""
+        return None
+
+    @property
+    def allows_timed_wakeup(self) -> bool:
+        """是否允许定时器在没有新消息时唤醒 Planner。"""
+        return True
+
+    def start_planner_turn(self, logical_turn_id: str) -> int:
+        """开启 Planner，返回当前逻辑回合已经完成的轮数。"""
+        return 0
+
+    def record_planner_run(self) -> None:
+        """记录一次有效 Planner 运行，更新场景的查看频率。"""
+        return None
+
+    def finish_planner_turn(self) -> None:
+        """内部循环退出后安排场景检查。"""
+        return None
+
+    def consume_silence_trigger(self) -> bool:
+        """消费已通过概率门控的静默查看信号。"""
+        return False
+
+    def close(self) -> None:
+        """停止场景定时任务。"""
+        return None
+
     def schedule_message_turn(self) -> None:
         runtime = self._runtime
         if runtime._message_turn_scheduled:
@@ -34,7 +64,7 @@ class MessageTurnScheduler(ABC):
             return
 
         result = self._evaluate(pending_count)
-        logger.debug(f"{runtime.log_prefix} 回复调度 待处理={pending_count} {result.detail}")
+        logger.debug(f"{runtime.log_prefix} 查看调度 待处理={pending_count} {result.detail}")
         if result.decision == "delay":
             runtime._defer_message_turn_check(result.delay_seconds)
             return

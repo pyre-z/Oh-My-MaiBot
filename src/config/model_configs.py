@@ -243,10 +243,10 @@ class ModelInfo(ConfigBase):
     _validate_any: bool = False
     suppress_any_warning: bool = True
 
-    model_type: Literal["llm", "embedding", "image_embedding"] = Field(
+    model_type: Literal["llm", "embedding", "image_embedding", "asr", "tts"] = Field(
         json_schema_extra={"x-widget": "select"},
     )
-    """模型类型：LLM、文本嵌入或图片嵌入；必填，旧配置由版本升级钩子一次性标注。"""
+    """模型类型：LLM、文本嵌入、图片嵌入、语音识别或语音合成；必填，旧配置由版本升级钩子一次性标注。"""
 
     model_identifier: str = Field(
         default="",
@@ -350,6 +350,27 @@ class ModelInfo(ConfigBase):
     )
     """是否为多模态模型。开启后表示该模型支持视觉输入。"""
 
+    max_images: int = Field(
+        default=0,
+        ge=0,
+        json_schema_extra={"label": {"zh_CN": "最大图片数量"}, "x-widget": "input", "advanced": True},
+    )
+    """单次请求的最大图片数量（包含长图切片），0 表示不限制。超限时保留最近的图片。"""
+
+    image_max_side: int = Field(
+        default=8000,
+        ge=1,
+        json_schema_extra={"label": {"zh_CN": "图片最大边长（像素）"}, "x-widget": "input", "advanced": True},
+    )
+    """图片长边上限，超限图片按比例缩小或分段。"""
+
+    image_min_side: int = Field(
+        default=1,
+        ge=1,
+        json_schema_extra={"label": {"zh_CN": "图片最小边长（像素）"}, "x-widget": "input", "advanced": True},
+    )
+    """图片短边下限，小图按比例放大；若受长边上限约束，则补边。不得超过最大边长。"""
+
     extra_params: dict[str, Any] = Field(
         default_factory=dict,
         json_schema_extra={
@@ -364,6 +385,8 @@ class ModelInfo(ConfigBase):
     Gemini 客户端会按自身支持的字段筛选并映射到 GenerateContentConfig、EmbedContentConfig 或音频请求配置中。"""
 
     def model_post_init(self, context: Any = None):
+        if self.image_min_side > self.image_max_side:
+            raise ValueError("图片最小边长不得超过最大边长")
         self.model_identifier = self.model_identifier.strip()
         if not self.model_identifier:
             raise ValueError(t("config.model_identifier_empty_generic"))
@@ -498,15 +521,6 @@ class ModelTaskConfig(ConfigBase):
     )
     """快速模型配置，用于表达方式选择、回复断句等需要快速完成的小任务，建议选择响应快的模型；留空时用 utils 模型"""
 
-    emoji: TaskConfig = Field(
-        default_factory=TaskConfig,
-        json_schema_extra={
-            "x-widget": "custom",
-            "advanced": True,
-        },
-    )
-    """表情包发送模型配置；留空时保持原有 planner/vlm 选择逻辑"""
-
     vlm: TaskConfig = Field(
         default_factory=TaskConfig,
         json_schema_extra={
@@ -523,6 +537,12 @@ class ModelTaskConfig(ConfigBase):
         },
     )
     """语音识别模型"""
+
+    tts: TaskConfig = Field(
+        default_factory=TaskConfig,
+        json_schema_extra={"x-widget": "custom", "advanced": True},
+    )
+    """语音合成模型；选用一个模型后可在回复中附加语音，留空时关闭。"""
 
     embedding: TaskConfig = Field(
         default_factory=TaskConfig,

@@ -9,6 +9,7 @@ import pytest
 
 from src.plugins.built_in.qq_official_adapter import codec
 from src.plugins.built_in.qq_official_adapter.plugin import QQOfficialAdapterPlugin
+from src.plugins.built_in.qq_official_adapter.settings import AdapterSettings
 
 
 def message(segments, group=True):
@@ -28,9 +29,35 @@ def file_segment(binary=b"hello", name="测试.txt", kind="file"):
 
 def adapter():
     plugin = QQOfficialAdapterPlugin()
+    plugin._plugin_config_instance = AdapterSettings()
     plugin._set_context(SimpleNamespace(logger=logging.getLogger("qq-file-test")))
     plugin._ready = True
     return plugin
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("audio,asr,kind,content", [
+    (b"wave", "你好", "voice", "[语音: 你好]"),
+    (b"wave", "", "voice", ""),
+    (b"", "你好", "text", "[语音: 你好]"),
+])
+async def test_inbound_voice_preserves_audio_and_qq_transcript(
+    audio: bytes, asr: str, kind: str, content: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = adapter()
+    download = AsyncMock(return_value=audio)
+    monkeypatch.setattr(plugin, "_download_attachment", download)
+    wav_url = "https://multimedia.nt.qq.com/sample.wav"
+    parts, labels, _, _ = await plugin._build_attachments({"attachments": [{
+        "type": "voice", "voice_wav_url": wav_url, "url": "https://multimedia.nt.qq.com/sample",
+        "asr_refer_text": asr,
+    }]})
+    download.assert_awaited_once_with(wav_url)
+    assert len(parts) == 1
+    assert (parts[0]["type"], parts[0]["data"]) == (kind, content)
+    assert labels == [content or "[语音]"]
+    if audio:
+        assert base64.b64decode(parts[0]["binary_data_base64"]) == audio
 
 
 @pytest.mark.parametrize("group", [True, False])

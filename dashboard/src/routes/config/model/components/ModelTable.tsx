@@ -55,12 +55,14 @@ interface ModelTableProps {
   onAdd?: (type: ModelCreationType) => void
 }
 
-// 操作列宽度固定，和表格同一底色；表格宽度跟随容器，三个文本列平分剩余空间，长文本截断。
-const ACTION_CELL_CLASS = 'w-24 text-right whitespace-nowrap'
+// 操作列按按钮尺寸预留空间，其余列根据表格容器宽度逐步收起。
+const ACTION_CELL_CLASS = 'text-right whitespace-nowrap'
 const ACTION_CELL_ATTR = { 'data-model-config-action-cell': 'true' } as const
 
 /** 能力标签：嵌入模型只标嵌入类型，对话模型标出能否看图。 */
 function modelCapabilityTags(model: ModelInfo) {
+  if (model.model_type === 'tts') return ['语音合成']
+  if (model.model_type === 'asr') return ['语音识别']
   if (model.model_type === 'embedding') return ['文本嵌入']
   if (model.model_type === 'image_embedding') return ['图片嵌入']
   return model.visual ? ['对话', '视觉'] : ['对话']
@@ -140,13 +142,13 @@ export const ModelTable = React.memo(function ModelTable({
                   onCheckedChange={onToggleSelectAll}
                 />
               </TableHead>
-              <TableHead className="w-[26%]">模型</TableHead>
-              <TableHead className="w-[14%]">厂商</TableHead>
-              <TableHead className="w-[12%]">能力</TableHead>
-              <TableHead className="w-[13%] whitespace-nowrap">
+              <TableHead>模型</TableHead>
+              <TableHead data-model-column="provider">厂商</TableHead>
+              <TableHead data-model-column="capabilities">能力</TableHead>
+              <TableHead data-model-column="price" className="whitespace-nowrap">
                 价格 <span className="font-normal text-muted-foreground">¥/M</span>
               </TableHead>
-              <TableHead className="whitespace-nowrap">负责的工作</TableHead>
+              <TableHead data-model-column="tasks" className="whitespace-nowrap">负责的工作</TableHead>
               <TableHead {...ACTION_CELL_ATTR} className={ACTION_CELL_CLASS}>
                 <span className="sr-only">操作</span>
               </TableHead>
@@ -189,8 +191,8 @@ export const ModelTable = React.memo(function ModelTable({
                         {model.model_identifier}
                       </span>
                     </TableCell>
-                    <TableCell className="truncate font-mono text-sm" title={model.api_provider}>{model.api_provider}</TableCell>
-                    <TableCell>
+                    <TableCell data-model-column="provider" className="truncate font-mono text-sm" title={model.api_provider}>{model.api_provider}</TableCell>
+                    <TableCell data-model-column="capabilities">
                       <span
                         data-model-capabilities="true"
                         className="block truncate text-xs text-muted-foreground"
@@ -199,15 +201,15 @@ export const ModelTable = React.memo(function ModelTable({
                         {modelCapabilityTags(model).join(' · ')}
                       </span>
                     </TableCell>
-                    <TableCell className="whitespace-nowrap font-mono text-sm" title={`输入 ¥${model.price_in}/M，输出 ¥${model.price_out}/M`}>
-                      {formatModelPrice(model.price_in)} · {formatModelPrice(model.price_out)}
+                    <TableCell data-model-column="price" className="font-mono text-sm" title={model.model_type === 'tts' ? undefined : `输入 ¥${model.price_in}/M，输出 ¥${model.price_out}/M`}>
+                      <span className="block truncate">{model.model_type === 'tts' ? '按字符计费' : `${formatModelPrice(model.price_in)} · ${formatModelPrice(model.price_out)}`}</span>
                       {!!model.price_periods?.length && (
-                        <span className="block text-xs font-normal text-primary">
+                        <span className="block truncate text-xs font-normal text-primary">
                           {model.price_periods.length} 个价格时段
                         </span>
                       )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell data-model-column="tasks">
                       <ModelTaskSummary used={used} tasks={getModelTasks?.(model.name) ?? []} />
                     </TableCell>
                     <TableCell {...ACTION_CELL_ATTR} className={ACTION_CELL_CLASS}>
@@ -217,8 +219,8 @@ export const ModelTable = React.memo(function ModelTable({
                           size="icon-xs"
                           className="shrink-0"
                           onClick={() => onTest(model.name)}
-                          disabled={isTesting}
-                          title="测试模型"
+                          disabled={isTesting || model.model_type === 'asr' || model.model_type === 'tts'}
+                          title={model.model_type === 'tts' ? '编辑模型即可试听音色' : model.model_type === 'asr' ? '请发送语音消息验证转写' : '测试模型'}
                           aria-label={`测试模型 ${model.name}`}
                         >
                           {isTesting ? (

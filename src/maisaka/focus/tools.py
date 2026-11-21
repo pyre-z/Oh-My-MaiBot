@@ -184,10 +184,8 @@ class FocusToolRouter:
 
     def definitions(self) -> List[Dict[str, Any]]:
         definitions = []
-        for name, route in self.routes.items():
-            if self.is_default_visible(route.spec) or any(
-                name in self.group.members[session_id].discovered_tool_names for session_id in route.variants
-            ):
+        for route in self.routes.values():
+            if self.is_default_visible(route.spec):
                 definitions.append(route.spec.to_llm_definition())
         return definitions
 

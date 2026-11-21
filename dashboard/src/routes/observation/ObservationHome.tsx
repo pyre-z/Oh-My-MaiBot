@@ -53,7 +53,7 @@ import { useNews } from '@/routes/home/hooks/useNews'
 import { useNewsReadState } from '@/routes/home/hooks/useNewsReadState'
 import { useQuickShortcuts } from '@/routes/home/hooks/useQuickShortcuts'
 import { useReviewStats } from '@/routes/home/hooks/useReviewStats'
-import { formatCacheRate, formatNumber } from '@/routes/home/StatisticsCards'
+import { formatCacheRate, formatNumber } from '@/routes/home/statistics-format'
 import {
   formatChartTimeAxis,
   formatTokenAxis,
@@ -77,7 +77,7 @@ import {
   visibleStatsSlots,
 } from './home-layout'
 import { DesktopPetCardActions, DesktopPetCardBody } from './DesktopPetCard'
-import { getDesktopPetStatus } from '@/lib/desktop-pet-api'
+import { desktopPetStatusQueryOptions } from '@/lib/desktop-pet-api'
 import { useQuery } from '@tanstack/react-query'
 
 const ExpressionReviewer = lazy(() =>
@@ -154,13 +154,7 @@ function ObservationHomeContent() {
   const [editing, setEditing] = useState(false)
   const [libraryOpen, setLibraryOpen] = useState(true)
   const [dragId, setDragId] = useState<HomeCardId | null>(null)
-  // 桌宠状态：开启时 3 秒刷新一次；没开时放慢，只用来发现用户刚刚开启
-  const petStatusQuery = useQuery({
-    queryKey: ['desktop-pet-status'],
-    queryFn: ({ signal }) => getDesktopPetStatus(signal),
-    refetchInterval: (query) => (query.state.data?.enabled ? 3_000 : 30_000),
-    retry: false,
-  })
+  const petStatusQuery = useQuery(desktopPetStatusQueryOptions)
   const petStatus = petStatusQuery.data
   const petEnabled = Boolean(petStatus?.enabled)
   const statsSlots = visibleStatsSlots(layout, petEnabled)
@@ -621,7 +615,7 @@ function ObservationHomeContent() {
         <BoardScreen className="flex flex-col">
           {[
             { label: t('home.cache.all'), rate: summary?.cache_hit_rate ?? null },
-            { label: t('home.cache.chat'), rate: summary?.chat_cache_hit_rate ?? null },
+            { label: t('home.cache.core'), rate: summary?.core_cache_hit_rate ?? null },
           ].map((item) => (
             <div key={item.label} data-observation-cache-row="true">
               <div className="flex items-baseline justify-between gap-2">

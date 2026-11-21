@@ -20,6 +20,7 @@ import { parse as parseToml } from 'smol-toml'
 
 import { DesktopPetCurrentTaskField } from '@/components/DesktopPetCurrentTaskField'
 import { DesktopPetSkinField } from '@/components/DesktopPetSkinField'
+import { DesktopPetSoundField } from '@/components/DesktopPetSoundField'
 import { AgentACPField, AgentConnectionSettings, AgentCustomArgs, AgentDesktopField } from '@/components/agent/AgentConnectionSettings'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -82,13 +83,11 @@ import {
   FocusWhitelistHook,
   JargonGroupsHook,
   JargonLearningListHook,
-  KeywordRulesHook,
   HiddenFieldHook,
   MCPRootItemsHook,
   MCPServersHook,
   MultipleReplyStyleHook,
   PrivateReplyPauseRulesHook,
-  RegexRulesHook,
   useAutoSave,
 } from './bot/hooks'
 import { collectChatSettings } from '@/lib/chat-settings-schema'
@@ -358,6 +357,7 @@ function BotConfigPageContent() {
     const hookEntries = [
       ['desktop_pet.skin_id', DesktopPetSkinField],
       ['desktop_pet.show_current_task', DesktopPetCurrentTaskField],
+      ['desktop_pet.message_sound', DesktopPetSoundField, 'wrapper'],
       ['agent.connection', AgentConnectionSettings, 'wrapper'],
       ['agent.desktop_manifest', AgentDesktopField, 'wrapper'],
       ['agent.acp_args', AgentCustomArgs, 'wrapper'],
@@ -394,8 +394,6 @@ function BotConfigPageContent() {
       ['a_memorix.filter.retrieval.chat_stream.chats', AMemorixRetrievalChatsHook],
       ['a_memorix.filter.retrieval.chat_summary.chats', AMemorixRetrievalChatsHook],
       ['a_memorix.filter.retrieval.episode.chats', AMemorixRetrievalChatsHook],
-      ['keyword_reaction.keyword_rules', KeywordRulesHook],
-      ['keyword_reaction.regex_rules', RegexRulesHook],
       ['mcp.client.roots.items', MCPRootItemsHook],
       ['mcp.servers', MCPServersHook],
     ] as const

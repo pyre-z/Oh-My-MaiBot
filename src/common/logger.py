@@ -796,6 +796,7 @@ def configure_structlog():
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
+            structlog.stdlib.PositionalArgumentsFormatter(),
             structlog.processors.add_log_level,
             structlog.processors.CallsiteParameterAdder(
                 parameters=[

@@ -1,12 +1,11 @@
 import {
-  Bot,
   ChevronDown,
   CircleAlert,
+  Copy,
   Folder,
   Loader2,
   Play,
   Plus,
-  RefreshCw,
   RotateCw,
   Square,
 } from 'lucide-react'
@@ -39,6 +38,35 @@ import { useHostRuntime } from './state'
 
 function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason)
+}
+
+function BotError({ error }: { error: string }) {
+  const { t } = useTranslation()
+  const [copied, setCopied] = useState(false)
+  const [copyError, setCopyError] = useState('')
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(error)
+      setCopied(true)
+      setCopyError('')
+    } catch (reason) {
+      setCopyError(errorMessage(reason))
+    }
+  }
+
+  return (
+    <Alert variant="destructive" className="min-w-0 overflow-hidden p-2.5 text-xs">
+      <AlertDescription className="min-w-0 space-y-2">
+        <pre tabIndex={0} className="max-h-60 overflow-auto whitespace-pre-wrap break-all font-mono text-xs [overflow-wrap:anywhere]">{error}</pre>
+        <Button size="sm" variant="outline" onClick={() => void copy()}>
+          <Copy className="size-3.5" />
+          {t(copied ? 'errorBoundary.copiedToClipboard' : 'errorBoundary.copyError')}
+        </Button>
+        {copyError && <p role="status" className="break-all text-xs">{copyError}</p>}
+      </AlertDescription>
+    </Alert>
+  )
 }
 
 function statusKey(bot: HostBot): string {
@@ -86,7 +114,6 @@ export function HostDashboard({ embedded = false }: { embedded?: boolean }) {
   const [readError, setReadError] = useState('')
   const [actionError, setActionError] = useState('')
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-  const [refreshing, setRefreshing] = useState(false)
   const [name, setName] = useState('')
   const [creating, setCreating] = useState(false)
   const [selecting, setSelecting] = useState(false)
@@ -96,9 +123,8 @@ export function HostDashboard({ embedded = false }: { embedded?: boolean }) {
   const pendingIds = useRef(new Set<string>())
 
   const refresh = useCallback((): Promise<void> => {
-    // 手动刷新、轮询和操作完成后的刷新共用一次读取，避免慢响应覆盖较新的状态。
+    // 轮询和操作完成后的刷新共用一次读取，避免慢响应覆盖较新的状态。
     if (refreshRequest.current) return refreshRequest.current
-    setRefreshing(true)
     const request = listHostBots()
       .then(
         (result) => {
@@ -112,7 +138,6 @@ export function HostDashboard({ embedded = false }: { embedded?: boolean }) {
       )
       .finally(() => {
         refreshRequest.current = null
-        setRefreshing(false)
       })
     refreshRequest.current = request
     return request
@@ -198,43 +223,17 @@ export function HostDashboard({ embedded = false }: { embedded?: boolean }) {
     <div
       className={cn('flex w-full flex-col gap-5', !embedded && 'mx-auto max-w-7xl p-4 sm:p-6 lg:p-7')}
     >
-      {/* 1. 页头区：对齐 P3 麦麦观察页头排布 */}
-      <header className="flex flex-wrap items-center justify-between gap-4">
-        <div className="min-w-0 space-y-1.5">
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-tight">
-              <Bot className="h-6 w-6 shrink-0" />
-              {t('hostManager.title')}
-            </h1>
-            {selectedBot && (
-              <Badge
-                variant={selectedBot.status === 'running' ? 'success' : 'outline'}
-                className="gap-1.5"
-              >
-                <StatusLight status={botLightStatus(selectedBot)} decorative />
-                <span>
-                  {t('hostManager.currentBot')}：{selectedBot.name}
-                </span>
-              </Badge>
-            )}
-          </div>
-          <p className="text-muted-foreground text-xs sm:text-sm">{t('hostManager.subtitle')}</p>
+      {selectedBot && (
+        <div>
+          <Badge
+            variant={selectedBot.status === 'running' ? 'success' : 'outline'}
+            className="gap-1.5"
+          >
+            <StatusLight status={botLightStatus(selectedBot)} decorative />
+            <span>{t('hostManager.currentBot')}：{selectedBot.name}</span>
+          </Badge>
         </div>
-
-        <div className="ml-auto flex items-center gap-3">
-          {lastUpdated && (
-            <span className="text-muted-foreground hidden text-xs tabular-nums sm:inline">
-              {t('hostManager.lastUpdated', {
-                time: lastUpdated.toLocaleTimeString(i18n.language),
-              })}
-            </span>
-          )}
-          <Button variant="outline" disabled={refreshing} onClick={() => void refresh()}>
-            <RefreshCw className={refreshing ? 'animate-spin' : ''} />
-            {t('hostManager.refresh')}
-          </Button>
-        </div>
-      </header>
+      )}
 
       {/* 告警提示区 */}
       {readError && (
@@ -327,9 +326,6 @@ export function HostDashboard({ embedded = false }: { embedded?: boolean }) {
                     : [{ label: t('hostManager.emptyTitle'), value: 1, className: 'bg-muted' }]
                 }
               />
-              <p data-board-label="true" className="leading-relaxed">
-                {t('hostManager.runtimeHint')}
-              </p>
             </div>
           </BoardScreen>
         </BoardModule>
@@ -430,7 +426,7 @@ export function HostDashboard({ embedded = false }: { embedded?: boolean }) {
                 asChild
                 key={bot.bot_id}
                 className={cn(
-                  'flex flex-col gap-2.5 p-3.5 transition-shadow',
+                  'flex min-w-0 flex-col gap-2.5 p-3.5 transition-shadow',
                   selected && 'ring-primary/65 ring-2'
                 )}
               >
@@ -463,13 +459,8 @@ export function HostDashboard({ embedded = false }: { embedded?: boolean }) {
                   </header>
 
                   {/* 中央下沉数据屏：遥测读数 + 错误/阶段说明 + 内嵌折叠目录详情 */}
-                  <DataPanel className="flex flex-col gap-2.5 p-3">
-                    {error && (
-                      <Alert variant="destructive" className="p-2.5 text-xs">
-                        <CircleAlert className="h-3.5 w-3.5" />
-                        <AlertDescription className="text-xs break-words">{error}</AlertDescription>
-                      </Alert>
-                    )}
+                  <DataPanel className="flex min-w-0 flex-col gap-2.5 p-3">
+                    {error && <BotError key={error} error={error} />}
 
                     {bot.detail && (
                       <p className="text-muted-foreground text-xs break-words" role="status">

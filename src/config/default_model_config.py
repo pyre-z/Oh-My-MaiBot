@@ -50,9 +50,9 @@ DEFAULT_TASK_CONFIG_TEMPLATES: dict[str, dict[str, Any]] = {
     },
     "learner": {"model_list": [], "max_tokens": 8192, "hard_timeout": 120.0},
     "fast_model": {"model_list": [], "max_tokens": 8192, "temperature": 0.3, "hard_timeout": 120.0},
-    "emoji": {"model_list": [], "max_tokens": 8192, "hard_timeout": 120.0},
     "vlm": {"model_list": [], "max_tokens": 8192, "hard_timeout": 240.0},
     "voice": {"model_list": [], "max_tokens": 8192, "hard_timeout": 120.0},
+    "tts": {"model_list": [], "hard_timeout": 120.0},
     "embedding": {"model_list": [], "max_tokens": 4096, "hard_timeout": 60.0},
     "image_embedding": {"model_list": [], "max_tokens": 4096, "hard_timeout": 60.0},
 }
@@ -68,6 +68,9 @@ DEFAULT_MODEL_TEMPLATES: list[dict[str, Any]] = [
         "price_periods": [],
         "send_temperature": True,
         "visual": False,
+        "max_images": 0,
+        "image_max_side": 8000,
+        "image_min_side": 1,
         "extra_params": {"thinking": {"type": "enabled"}, "reasoning_effort": "high"},
     },
     {
@@ -80,6 +83,9 @@ DEFAULT_MODEL_TEMPLATES: list[dict[str, Any]] = [
         "price_periods": [],
         "send_temperature": True,
         "visual": False,
+        "max_images": 0,
+        "image_max_side": 8000,
+        "image_min_side": 1,
         "extra_params": {"thinking": {"type": "disabled"}},
     },
     {
@@ -92,6 +98,9 @@ DEFAULT_MODEL_TEMPLATES: list[dict[str, Any]] = [
         "price_periods": [],
         "send_temperature": True,
         "visual": False,
+        "max_images": 0,
+        "image_max_side": 8000,
+        "image_min_side": 1,
         "extra_params": {"thinking": {"type": "disabled"}},
     },
 ]
