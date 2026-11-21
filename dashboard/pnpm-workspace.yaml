@@ -1,4 +1,9 @@
 allowBuilds:
-  electron: set this to true or false
-  electron-winstaller: set this to true or false
-  esbuild: set this to true or false
+  electron: false
+  electron-winstaller: false
+  esbuild: true
+
+# dashboard 源码直接 import '@tanstack/history'，但它只是 react-router 的传递依赖；
+# pnpm isolated 模式不提升到顶层 → tsc 报 TS2307，连带 HistoryState 类型增强失效。
+publicHoistPattern:
+  - '@tanstack/*'
