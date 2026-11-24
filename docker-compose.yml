@@ -7,7 +7,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: oh-my-maibot:1.4.7-fork.0
+    image: oh-my-maibot:1.4.8-fork.0
     # image: sengokucola/maibot:latest
     #### dev ####
     # image: sengokucola/maibot:dev
