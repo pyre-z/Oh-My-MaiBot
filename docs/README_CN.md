@@ -24,6 +24,10 @@
 <!-- Mascot on the Right (Float) -->
 <img src="../depends-data/maimai-v2.png" align="right" width="40%" alt="MaiBot Character" style="margin-left: 20px; margin-bottom: 20px;">
 
+> [!NOTE]
+> 本页是上游 MaiBot 的中文说明，用于对照。本仓库是个人 fork **Oh-My-MaiBot**（同步基线 MaiBot v1.4.8 / WebUI 1.10.8），
+> fork 自己的部署方式与改动清单见 [仓库首页](../README.md)。
+
 ## 介绍
 
 麦麦 MaiSaka 是一个基于大语言模型的可交互智能体。

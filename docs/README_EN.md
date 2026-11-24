@@ -24,6 +24,11 @@
 <!-- Mascot on the Right (Float) -->
 <img src="../depends-data/maimai-v2.png" align="right" width="40%" alt="MaiBot Character" style="margin-left: 20px; margin-bottom: 20px;">
 
+> [!NOTE]
+> This page is the upstream MaiBot README, kept here for reference. This repository is a personal fork,
+> **Oh-My-MaiBot** (synced with MaiBot v1.4.8 / WebUI 1.10.8). For the fork's own deployment notes and
+> change list, see the [repository home](../README.md).
+
 ## Introduction
 
 MaiSaka is an interactive agent based on large language models.
