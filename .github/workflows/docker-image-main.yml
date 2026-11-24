@@ -1,15 +1,8 @@
 name: Docker Build and Push (Main)
 
+# 本 fork 不向 Docker Hub 发布镜像，因此仅供 publish-maibot.yml 通过
+# workflow_call 调用（发布链保持完整但永不实际执行）；无 push/tag 触发。
 on:
-  push:
-    branches:
-      - main
-      - classical
-    tags:
-      - "v*.*.*"
-      - "v*"
-      - "*.*.*"
-      - "*.*.*-*"
   # 正式发布直接调用，避免 GITHUB_TOKEN 创建 tag 后不会触发 push 工作流。
   workflow_call:
     inputs:

@@ -1,5 +1,9 @@
 # GitHub-Side Localization Workflow Report
 
+> [!NOTE]
+> **本 fork 已移除 Crowdin 相关流水线**（`crowdin-sync.yml`、`crowdin-bootstrap.yml`、根目录 `crowdin.yml`）。
+> 本文档保留作上游设计与流程参考，本仓库实际只保留 `i18n-validate.yml` 做 key 完整性校验。
+
 ## Scope
 
 This document defines the repository-side localization workflow for Option B.

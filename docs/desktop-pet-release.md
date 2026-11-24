@@ -25,6 +25,11 @@
 
 ## CNB Release 与附件同步
 
+> [!NOTE]
+> **本 fork 已移除 CNB 同步**：`cnb-mirror.yml`、`cnb-releases.yml` 及其脚本已删除。
+> 这些工作流原本锁定上游仓库名（`if: github.repository == 'Mai-with-u/MaiBot'`），在个人 fork 中永远不会执行。
+> 以下内容保留作上游参考。
+
 独立工作流 `.github/workflows/cnb-releases.yml`（**Sync Releases to CNB**）在桌宠构建或主程序发布工作流结束后运行，也支持 GitHub Release 发布/编辑事件和手动运行。即使桌宠只有一个平台成功，已挂到 GitHub Release 的附件也会进入同步。
 
 同步复用现有 `CNB_TOKEN`、`CNB_GROUP` 和可选的 `CNB_MAIBOT_REPO` 配置。`CNB_TOKEN` 除原有代码镜像权限外，还需目标仓库的 **`repo-release:rw`** 权限。工作流必须合并到默认分支才能接收 `workflow_run` 事件。
